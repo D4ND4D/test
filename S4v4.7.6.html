@@ -1,0 +1,2632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='16' fill='%230c0e0f'/%3E%3Cpolygon points='11,8 22,16 11,24 14.5,16' fill='%235ee6d0'/%3E%3Ccircle cx='22' cy='24' r='1.6' fill='%235ee6d0'/%3E%3C/svg%3E">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0c0e0f">
+<title>D4N's Study Assistant</title>
+<style>
+  :root{
+    --bg:#0c0e0f; --panel:#121517; --panel-2:#161a1c; --border:#22282b;
+    --border-bright:#5ee6d0; --cyan:#5ee6d0; --amber:#f0b35e; --green:#7ee787;
+    --red:#ff6b6b; --grey:#7b8389; --grey-dim:#52585c; --white:#e9edee;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{
+    margin:0; padding:0; background:var(--bg); color:var(--white);
+    font-family:"JetBrains Mono","IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    min-height:100vh; overscroll-behavior-y:none;
+  }
+  body::before{
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
+    background:radial-gradient(ellipse at 50% -10%, rgba(94,230,208,0.05), transparent 60%);
+  }
+  #app{
+    position:relative; z-index:1; max-width:560px; margin:0 auto;
+    min-height:100vh; display:flex; flex-direction:column; justify-content:center;
+    padding:14px 14px 28px; transition:margin-top .15s ease;
+  }
+  #app.windowed{
+    max-width:none; margin:0; padding:0; display:block;
+    justify-content:flex-start; overflow:hidden; min-height:100vh;
+  }
+  #desktop{ position:relative; width:100%; min-height:100vh; overflow:hidden; }
+  #wmLines{
+    position:absolute; inset:0; width:100%; height:100%;
+    pointer-events:none; z-index:1;
+  }
+  .wm-window{ position:absolute; width:520px; z-index:10; }
+  .wm-window .term{
+    max-height:72vh;
+    box-shadow:0 0 0 1px rgba(94,230,208,0.06), 0 16px 40px -10px rgba(0,0,0,0.85);
+    transition:box-shadow .18s;
+  }
+  .wm-window.focused .term{
+    box-shadow:0 0 0 1px rgba(94,230,208,0.28), 0 22px 55px -12px rgba(0,0,0,0.95);
+  }
+  .wm-window .titlebar{ cursor:move; user-select:none; -webkit-user-select:none; }
+  .home-pill{
+    position:fixed; bottom:14px; left:14px; z-index:80;
+    background:var(--panel-2); border:1px solid var(--border-bright); color:var(--cyan);
+    border-radius:20px; padding:8px 14px; font-family:inherit; font-size:12.5px;
+    cursor:pointer; box-shadow:0 6px 20px -8px rgba(0,0,0,.7);
+  }
+  .home-pill:active{ transform:scale(0.95); }
+
+  .float-bar{
+    position:fixed; top:0; left:0; right:0; z-index:70;
+    display:flex; flex-direction:column; align-items:center; gap:6px;
+    padding:8px 10px 0; pointer-events:none;
+  }
+  .float-pill{
+    pointer-events:auto; max-width:532px; width:100%;
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    background:var(--panel-2); border:1px solid var(--border-bright);
+    color:var(--white); font-size:12.5px; border-radius:8px;
+    padding:9px 12px; box-shadow:0 6px 20px -8px rgba(0,0,0,0.6); cursor:pointer;
+  }
+  .float-pill.alarm{ border-color:var(--red); animation:pulse-alarm 1s infinite; }
+  @keyframes pulse-alarm{
+    0%,100%{ box-shadow:0 0 0 0 rgba(255,107,107,0.45); }
+    50%{ box-shadow:0 0 0 7px rgba(255,107,107,0); }
+  }
+  .float-pill .fp-stop{
+    background:transparent; border:1px solid var(--border); color:var(--red);
+    border-radius:6px; font-size:11px; padding:4px 9px; font-family:inherit; cursor:pointer;
+  }
+  .float-pill .fp-mini{
+    background:transparent; border:1px solid var(--border); color:var(--grey);
+    border-radius:6px; font-size:11px; padding:4px 9px; font-family:inherit; cursor:pointer;
+  }
+  .restore-badge{
+    pointer-events:auto; position:fixed; right:12px; bottom:12px; z-index:71;
+    background:var(--panel-2); border:1px solid var(--border-bright); color:var(--cyan);
+    border-radius:20px; padding:8px 14px; font-size:12.5px; font-family:inherit;
+    cursor:pointer; box-shadow:0 6px 20px -8px rgba(0,0,0,.7);
+  }
+  .restore-badge.alarm{ border-color:var(--red); color:var(--red); animation:pulse-alarm 1s infinite; }
+
+  .term{
+    background:var(--panel); border:1px solid var(--border); border-radius:10px;
+    box-shadow:0 0 0 1px rgba(94,230,208,0.04), 0 10px 30px -10px rgba(0,0,0,0.6);
+    overflow:hidden; display:flex; flex-direction:column; max-height:calc(100vh - 28px);
+  }
+  .titlebar{
+    display:flex; align-items:center; gap:8px; padding:10px 12px;
+    background:var(--panel-2); border-bottom:1px solid var(--border);
+  }
+  .dot{ width:9px; height:9px; border-radius:50%; transition:background .18s, box-shadow .18s; }
+  .dot.r{ background:#ff5f56; }
+  .dot.y{ background:#ffbd2e; }
+  .dot.g{ background:#27c93f; }
+  .dot.blue{ background:#4d9fff !important; box-shadow:0 0 9px rgba(77,159,255,.85); }
+  .titlebar .path{
+    margin-left:6px; font-size:11px; color:var(--grey-dim); letter-spacing:.02em;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;
+  }
+  .titlebar-back{
+    flex-shrink:0; background:transparent; border:1px solid var(--border); border-radius:6px;
+    color:var(--cyan); font-family:inherit; font-size:11.5px; font-weight:600;
+    padding:5px 10px; cursor:pointer;
+  }
+  .titlebar-back:active{ background:rgba(94,230,208,0.1); }
+
+  .screen{
+    padding:18px 16px 20px; flex:1; display:flex; flex-direction:column;
+    min-height:0; overflow-y:auto;
+  }
+  .brand{
+    text-align:center; color:var(--grey); font-size:11px; letter-spacing:.08em;
+    margin-bottom:14px; text-transform:uppercase;
+  }
+  h1.page-title{
+    font-size:18px; margin:0 0 2px; color:var(--amber); font-weight:700;
+    letter-spacing:.02em; display:flex; align-items:center; justify-content:center; gap:8px;
+  }
+  .cursor{
+    display:inline-block; width:9px; height:16px; background:var(--amber);
+    animation:blink 1.1s steps(1) infinite; vertical-align:-3px;
+  }
+  @keyframes blink{ 0%,49%{opacity:1;} 50%,100%{opacity:0;} }
+  .page-sub{ text-align:center; color:var(--grey); font-size:12px; margin-bottom:16px; }
+  hr.div{ border:none; border-top:1px solid var(--border); margin:14px 0; }
+
+  .menu{ display:flex; flex-direction:column; gap:8px; }
+  .menu-item{
+    display:flex; align-items:center; gap:12px; background:var(--panel-2);
+    border:1px solid var(--border); border-radius:8px; padding:13px 14px;
+    cursor:pointer; transition:border-color .15s, transform .08s; text-align:left;
+    color:var(--white); font-family:inherit; font-size:14.5px; width:100%;
+  }
+  .menu-item:active{ transform:scale(0.985); }
+  .menu-item:hover{ border-color:var(--border-bright); }
+  .menu-item .num{ color:var(--cyan); font-weight:700; min-width:14px; }
+  .menu-item .icon{ font-size:16px; }
+  .menu-item .label{ flex:1; }
+  .menu-item .meta{ color:var(--grey-dim); font-size:12px; }
+  .menu-item.danger .icon, .menu-item.danger .label{ color:var(--red); }
+  .menu-item.accent .icon, .menu-item.accent .label{ color:var(--green); }
+
+  .btn{
+    display:inline-flex; align-items:center; justify-content:center; gap:8px;
+    border-radius:8px; border:1px solid var(--border); background:var(--panel-2);
+    color:var(--white); font-family:inherit; font-size:14px; font-weight:600;
+    padding:13px 16px; cursor:pointer; width:100%;
+    transition:transform .08s, border-color .15s, opacity .15s;
+  }
+  .btn:active{ transform:scale(0.98); }
+  .btn:disabled{ opacity:.4; cursor:not-allowed; }
+  .btn-primary{ background:var(--cyan); color:#06231e; border-color:var(--cyan); }
+  .btn-danger{ background:transparent; color:var(--red); border-color:#5a2424; }
+  .btn-ghost{ background:transparent; color:var(--grey); border-color:var(--border); }
+  .btn-row{ display:flex; gap:10px; margin-top:14px; }
+  .btn-row .btn{ flex:1; }
+
+  label.field-label{
+    display:block; color:var(--grey); font-size:12px; margin:0 0 6px; letter-spacing:.02em;
+  }
+  textarea, input[type=text], input[type=number]{
+    width:100%; background:var(--bg); border:1px solid var(--border); border-radius:8px;
+    color:var(--white); font-family:inherit; font-size:14.5px; padding:12px 13px;
+    margin-bottom:14px; resize:vertical;
+  }
+  textarea:focus, input:focus{ outline:none; border-color:var(--cyan); }
+  textarea{ min-height:64px; }
+
+  .check-row{
+    display:flex; align-items:center; gap:8px; font-size:13px; color:var(--grey);
+    margin-bottom:14px;
+  }
+  .check-row input[type=checkbox]{ width:auto; margin:0; }
+
+  .card{
+    background:var(--panel-2); border:1px solid var(--border); border-radius:8px;
+    padding:16px; margin-bottom:14px;
+  }
+  .qa-label{
+    font-size:11px; letter-spacing:.08em; text-transform:uppercase; margin-bottom:8px;
+    display:flex; align-items:center; gap:6px;
+  }
+  .qa-label.q{ color:var(--amber); }
+  .qa-label.a{ color:var(--green); }
+  .qa-text{ font-size:15.5px; line-height:1.5; color:var(--white); }
+  .note-content{ white-space:pre-wrap; font-size:14.5px; line-height:1.6; color:var(--white); }
+  .tts-controls{ display:flex; gap:10px; margin:14px 0; }
+  .tts-controls .btn{ flex:1; }
+
+  .progress-line{ display:flex; justify-content:space-between; color:var(--grey); font-size:12px; margin-bottom:6px; }
+  .bar-track{ height:8px; border-radius:4px; background:var(--border); overflow:hidden; margin-bottom:16px; }
+  .bar-fill{ height:100%; border-radius:4px; transition:width .25s ease; }
+  .bar-fill.cyan{ background:var(--cyan); }
+  .bar-fill.green{ background:var(--green); }
+  .bar-fill.amber{ background:var(--amber); }
+  .bar-fill.red{ background:var(--red); }
+  .bar-fill.magenta{ background:#c792ea; }
+
+  .empty-state{
+    text-align:center; color:var(--grey); padding:30px 10px; font-size:13.5px; line-height:1.6;
+  }
+  .empty-state .big{ font-size:28px; margin-bottom:10px; }
+
+  .toast{
+    position:fixed; bottom:18px; left:50%; transform:translateX(-50%) translateY(10px);
+    background:var(--panel-2); border:1px solid var(--border-bright); color:var(--white);
+    padding:10px 16px; border-radius:8px; font-size:13px; z-index:80;
+    opacity:0; transition:opacity .2s, transform .2s; pointer-events:none;
+    max-width:90%; text-align:center;
+  }
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+  .footer-note{
+    margin-top:auto; text-align:center; color:var(--grey-dim); font-size:10.5px; padding-top:14px;
+  }
+  .list-row{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    background:var(--panel-2); border:1px solid var(--border); border-radius:8px;
+    padding:11px 13px; margin-bottom:8px; cursor:pointer;
+  }
+  .list-row:hover{ border-color:var(--border-bright); }
+  .list-row .lr-q{ font-size:13.5px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .list-row .lr-meta{ color:var(--grey-dim); font-size:11px; white-space:nowrap; }
+
+  .stat-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px; }
+  .stat-box{ background:var(--panel-2); border:1px solid var(--border); border-radius:8px; padding:12px 14px; }
+  .stat-box .stat-val{ font-size:20px; font-weight:700; color:var(--cyan); }
+  .stat-box .stat-label{ font-size:11px; color:var(--grey); margin-top:2px; }
+
+  .session-row{
+    display:flex; align-items:center; gap:10px; padding:9px 0;
+    border-bottom:1px solid var(--border); font-size:12.5px;
+  }
+  .session-row:last-child{ border-bottom:none; }
+  .session-row .sr-date{ color:var(--grey-dim); width:62px; flex-shrink:0; }
+  .session-row .sr-subj{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .session-row .sr-score{ font-weight:700; width:48px; text-align:right; flex-shrink:0; }
+  .session-row .sr-cards{ color:var(--grey-dim); width:62px; text-align:right; flex-shrink:0; }
+
+  .timer-display{
+    text-align:center; font-size:46px; font-weight:700; color:var(--cyan);
+    margin:18px 0 10px; letter-spacing:.04em;
+  }
+  .timer-presets{ display:flex; gap:8px; margin-bottom:14px; }
+  .timer-presets .btn{ font-size:13px; padding:10px; }
+
+  select.subj-select{
+    width:100%; background:var(--bg); border:1px solid var(--border); border-radius:8px;
+    color:var(--white); font-family:inherit; font-size:14.5px; padding:12px 13px;
+    margin-bottom:14px; appearance:none;
+  }
+  .yn-row{ display:flex; gap:10px; }
+  .yn-row .btn{ font-size:15px; padding:15px; }
+  .badge{
+    display:inline-block; font-size:10.5px; padding:2px 8px; border-radius:10px;
+    border:1px solid var(--border); color:var(--grey); margin-left:6px;
+  }
+  .quiz-timer{
+    text-align:center; font-size:22px; font-weight:700; color:var(--cyan);
+    letter-spacing:.08em; margin-bottom:10px;
+  }
+  .quiz-timer.warn{ color:var(--amber); }
+  .quiz-timer.danger{ color:var(--red); animation:pulse-alarm 1s infinite; }
+  .note-row{
+    display:flex; align-items:center; gap:10px; background:var(--panel-2);
+    border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-bottom:8px;
+  }
+  .note-row .nr-title{ flex:1; font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .mini-btn{
+    background:transparent; border:1px solid var(--border); color:var(--cyan);
+    border-radius:6px; font-family:inherit; font-size:11.5px; padding:5px 9px;
+    cursor:pointer; flex-shrink:0;
+  }
+  .mini-btn.danger{ color:var(--red); border-color:#5a2424; }
+  .mini-btn:active{ transform:scale(0.94); }
+
+  .wm-toggle{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    background:var(--panel-2); border:1px solid var(--border); border-radius:8px;
+    padding:13px 14px; font-size:14px;
+  }
+  .wm-toggle .switch{
+    width:44px; height:24px; border-radius:12px; background:var(--border);
+    position:relative; transition:background .2s; cursor:pointer; flex-shrink:0;
+  }
+  .wm-toggle .switch::after{
+    content:""; position:absolute; top:2px; left:2px; width:20px; height:20px;
+    border-radius:50%; background:var(--grey); transition:transform .2s, background .2s;
+  }
+  .wm-toggle .switch.on{ background:rgba(94,230,208,0.3); }
+  .wm-toggle .switch.on::after{ transform:translateX(20px); background:var(--cyan); }
+
+  @media (max-width:380px){
+    .qa-text{ font-size:14.5px; }
+    .timer-display{ font-size:38px; }
+  }
+</style>
+</head>
+<body>
+<div class="float-bar" id="floatBar"></div>
+<div id="app"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* =========================================================
+   D4N'S STUDY ASSISTANT — v7 (single instance per page)
+   ========================================================= */
+
+const EMPTY_DATA = { flashcards:{}, study_sessions:[], notes:{} };
+
+const STORAGE_KEY = "d4n_study_data_v1";
+const TIMER_KEY = "d4n_timer_state_v1";
+const WM_ENABLED_KEY = "d4n_wm_enabled_v1";
+const WM_STATE_KEY = "d4n_wm_state_v1";
+
+let DATA = loadData();
+let TIMER = loadTimer();
+let nav = { page:"home", params:{} };
+let navStack = [];
+let CURRENT_WIN_ID = null;
+
+let ttsState = 'stopped';
+let ttsNoteId = null;
+let ttsNoteTitle = null;
+
+let WM_ENABLED = false;
+let WM = { windows: [], zCounter: 10, focusedId: null };
+let seqState = {};
+let dragState = null;
+let chirpInterval = null;
+
+/* ============================================================
+   DATA STORAGE
+   ============================================================ */
+function loadData(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(raw){
+      const d = JSON.parse(raw);
+      if(!d.flashcards) d.flashcards = {};
+      if(!d.study_sessions) d.study_sessions = [];
+      if(!d.notes) d.notes = {};
+      return d;
+    }
+  }catch(e){}
+  const seeded = JSON.parse(JSON.stringify(EMPTY_DATA));
+  saveData(seeded);
+  return seeded;
+}
+function saveData(data){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }catch(e){} }
+
+function blankTimer(){ return {active:false, endsAt:0, totalSeconds:0, alarming:false, paused:false, hidden:false, pausedRemaining:0}; }
+function loadTimer(){
+  try{
+    const raw = localStorage.getItem(TIMER_KEY);
+    if(raw){
+      const t = JSON.parse(raw);
+      if(typeof t.paused !== 'boolean') t.paused = false;
+      if(typeof t.hidden !== 'boolean') t.hidden = false;
+      if(typeof t.pausedRemaining !== 'number') t.pausedRemaining = 0;
+      return t;
+    }
+  }catch(e){}
+  return blankTimer();
+}
+function saveTimer(){ try{ localStorage.setItem(TIMER_KEY, JSON.stringify(TIMER)); }catch(e){} }
+
+/* ============================================================
+   WINDOW MANAGER
+   ============================================================ */
+function loadWM(){
+  try{
+    WM_ENABLED = localStorage.getItem(WM_ENABLED_KEY) === "1";
+    const raw = localStorage.getItem(WM_STATE_KEY);
+    if(raw){
+      const p = JSON.parse(raw);
+      if(Array.isArray(p.windows)) WM.windows = p.windows;
+      if(typeof p.zCounter === 'number') WM.zCounter = p.zCounter;
+      if(p.focusedId) WM.focusedId = p.focusedId;
+    }
+  }catch(e){}
+  if(!WM.windows.find(w => w.isHome)){
+    const hw = { id: genId('win'), page:'home', params:{}, parentId:null, x:30, y:30, z:++WM.zCounter, isHome:true };
+    WM.windows = WM.windows.filter(w => !w.isHome);
+    WM.windows.unshift(hw);
+    WM.focusedId = hw.id;
+  }
+}
+function saveWM(){
+  try{
+    localStorage.setItem(WM_ENABLED_KEY, WM_ENABLED ? "1" : "0");
+    localStorage.setItem(WM_STATE_KEY, JSON.stringify({
+      windows: WM.windows, zCounter: WM.zCounter, focusedId: WM.focusedId
+    }));
+  }catch(e){}
+}
+
+function windowedActive(){ return WM_ENABLED && window.innerWidth >= 700; }
+function wmWindowById(id){ return WM.windows.find(w => w.id === id); }
+function wmChildren(id){ return WM.windows.filter(w => w.parentId === id); }
+function wmDescendants(id){
+  const out = []; const queue = [id];
+  while(queue.length){
+    const cur = queue.shift();
+    wmChildren(cur).forEach(k => { out.push(k); queue.push(k.id); });
+  }
+  return out;
+}
+function wmClose(id){
+  const w = wmWindowById(id); if(!w || w.isHome) return;
+  const desc = wmDescendants(id).map(d => d.id);
+  const ids = new Set([id, ...desc]);
+  WM.windows = WM.windows.filter(x => !ids.has(x.id));
+  if(ids.has(WM.focusedId)){
+    WM.focusedId = WM.windows.length ? WM.windows[WM.windows.length-1].id : null;
+  }
+  saveWM();
+  render();
+}
+function wmCloseAllExceptHome(){
+  WM.windows = WM.windows.filter(w => w.isHome);
+  WM.focusedId = WM.windows[0] ? WM.windows[0].id : null;
+  saveWM();
+  render();
+}
+
+/* ------------------------------------------------------------
+   wmOpen — now guarantees only ONE window per page type.
+   If a window with the same page already exists anywhere on the
+   desktop, we reuse it: propagate the subject if it changed,
+   merge in the new params, raise it to front, and focus it.
+   ------------------------------------------------------------ */
+function wmOpen(page, params, parentId){
+  const parent = parentId ? wmWindowById(parentId) : null;
+
+  // Inherit subject from parent when the caller doesn't pass one.
+  const merged = {...(params||{})};
+  if(merged.subject === undefined && parent && parent.params && parent.params.subject !== undefined){
+    merged.subject = parent.params.subject;
+  }
+
+  // Reuse an existing window of the same page type if one exists.
+  const existing = WM.windows.find(w => w.page === page);
+  if(existing){
+    const oldSubj = existing.params ? existing.params.subject : undefined;
+    const newSubj = merged.subject;
+
+    if(newSubj !== undefined && oldSubj !== undefined && oldSubj !== newSubj){
+      wmPropagateSubject(existing.id, oldSubj, newSubj);
+      existing.params = {...existing.params, ...merged};
+    } else {
+      existing.params = {...(existing.params||{}), ...merged};
+    }
+
+    existing.z = ++WM.zCounter;
+    WM.focusedId = existing.id;
+    saveWM();
+    return existing;
+  }
+
+  // Otherwise create a new window.
+  let x = 40, y = 40;
+  if(parent){
+    const sibCount = wmChildren(parentId).length;
+    x = Math.min(parent.x + 60 + (sibCount % 4) * 30, Math.max(20, window.innerWidth - 560));
+    y = Math.min(parent.y + 60 + (sibCount % 6) * 30, Math.max(20, window.innerHeight - 300));
+    x = Math.max(20, x); y = Math.max(20, y);
+  }
+  const w = {
+    id: genId('win'), page, params: merged,
+    parentId: parentId || null, x, y, z: ++WM.zCounter, isHome:false
+  };
+  WM.windows.push(w);
+  WM.focusedId = w.id;
+  saveWM();
+  return w;
+}
+
+/* Close cur + its descendants, then focus (or create) a window of `page`. */
+function wmGoBackTo(page, params){
+  const cur = wmWindowById(CURRENT_WIN_ID);
+  if(!cur) return;
+  const merged = {...(params||{})};
+  if(merged.subject === undefined && cur.params && cur.params.subject !== undefined){
+    merged.subject = cur.params.subject;
+  }
+  const descIds = new Set(wmDescendants(cur.id).map(d => d.id));
+  const existing = WM.windows.find(w =>
+    w.page === page && w.id !== cur.id && !descIds.has(w.id)
+  );
+  if(existing){
+    const toClose = new Set([cur.id, ...descIds]);
+    WM.windows = WM.windows.filter(w => !toClose.has(w.id));
+    existing.z = ++WM.zCounter;
+    WM.focusedId = existing.id;
+    saveWM();
+    render();
+    return;
+  }
+  const toClose = new Set(descIds);
+  WM.windows = WM.windows.filter(w => !toClose.has(w.id));
+  cur.page = page;
+  cur.params = merged;
+  saveWM();
+  render();
+}
+
+/* Replace cur's content with `page` (used for "Study again", etc). */
+function wmReplace(page, params){
+  const cur = wmWindowById(CURRENT_WIN_ID);
+  if(!cur) return;
+  const merged = {...(params||{})};
+  if(merged.subject === undefined && cur.params && cur.params.subject !== undefined){
+    merged.subject = cur.params.subject;
+  }
+  const descIds = new Set(wmDescendants(cur.id).map(d => d.id));
+  WM.windows = WM.windows.filter(w => !descIds.has(w.id));
+  cur.page = page;
+  cur.params = merged;
+  saveWM();
+  render();
+}
+
+function wmFocusExisting(page, excludeId){
+  const existing = WM.windows.find(w => w.page === page && w.id !== excludeId);
+  if(!existing) return false;
+  existing.z = ++WM.zCounter;
+  WM.focusedId = existing.id;
+  saveWM();
+  render();
+  return true;
+}
+
+/* Update subject on a window and every descendant, handling page-specific resets. */
+function wmPropagateSubject(windowId, oldSubject, newSubject){
+  const w = wmWindowById(windowId); if(!w) return;
+  if(w.params && w.params.subject === oldSubject) w.params.subject = newSubject;
+
+  switch(w.page){
+    case 'study_session': {
+      const cards = DATA.flashcards[newSubject] || [];
+      if(cards.length){
+        const order = cards.map((_,i)=>i);
+        shuffle(order);
+        w.params = { subject:newSubject, order, idx:0, correct:0, revealed:false };
+      }else{
+        w.page = 'study_complete';
+        w.params = { subject:newSubject, correct:0, total:0 };
+      }
+      break;
+    }
+    case 'study_complete': {
+      w.params = { subject:newSubject, correct:0, total:0 };
+      break;
+    }
+    case 'quiz_session':
+    case 'quiz_complete': {
+      w.page = 'quiz_settings';
+      w.params = { subject:newSubject };
+      break;
+    }
+    case 'edit_card_form': {
+      const cards = DATA.flashcards[newSubject] || [];
+      const idx = w.params.cardIdx || 0;
+      if(!cards.length || idx >= cards.length) w.params.cardIdx = 0;
+      break;
+    }
+    case 'read_view': {
+      const notes = DATA.notes[newSubject] || [];
+      if(!notes.find(n => n.id === w.params.noteId)){
+        w.page = 'read_menu'; w.params = { subject:newSubject };
+      }
+      break;
+    }
+    case 'read_write_form': {
+      if(w.params.noteId){
+        const notes = DATA.notes[newSubject] || [];
+        if(!notes.find(n => n.id === w.params.noteId)){
+          w.page = 'read_menu'; w.params = { subject:newSubject };
+        }
+      }
+      break;
+    }
+  }
+  wmDescendants(windowId).forEach(d => wmPropagateSubject(d.id, oldSubject, newSubject));
+}
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+function normQ(q){ return (q||"").trim().toLowerCase().replace(/\s+/g,' '); }
+function genId(prefix){ return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,7)}`; }
+function slug(s){ return (s||"").toLowerCase().replace(/\s+/g,'-').replace(/[^a-z0-9\-]/g,''); }
+function esc(s){
+  const d = document.createElement("div");
+  d.textContent = s==null ? "" : String(s);
+  return d.innerHTML;
+}
+function fmtDate(iso){
+  if(!iso) return "—";
+  const d = new Date(iso); if(isNaN(d)) return "—";
+  const mm = String(d.getMonth()+1).padStart(2,"0");
+  const dd = String(d.getDate()).padStart(2,"0");
+  const hh = String(d.getHours()).padStart(2,"0");
+  const mi = String(d.getMinutes()).padStart(2,"0");
+  return `${mm}/${dd} ${hh}:${mi}`;
+}
+function subjects(){
+  const primary = Object.keys(DATA.flashcards);
+  const extra = Object.keys(DATA.notes).filter(s=>!DATA.flashcards.hasOwnProperty(s));
+  return [...primary, ...extra];
+}
+function cardCount(subj){ return (DATA.flashcards[subj]||[]).length; }
+function totalCards(){ return Object.values(DATA.flashcards).reduce((s,c)=>s+c.length,0); }
+function notesFor(subject){ return DATA.notes[subject] || []; }
+function notesCount(subject){ return notesFor(subject).length; }
+function getNote(subject, noteId){ return notesFor(subject).find(n=>n.id===noteId); }
+function ensureSubject(name){
+  if(!DATA.flashcards[name]) DATA.flashcards[name] = [];
+  if(!DATA.notes[name]) DATA.notes[name] = [];
+}
+function shuffle(arr){
+  for(let i=arr.length-1;i>0;i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [arr[i],arr[j]] = [arr[j],arr[i]];
+  }
+  return arr;
+}
+
+/* ============================================================
+   EXPORT / IMPORT
+   ============================================================ */
+function buildExportPayload(opts={}){
+  const { subjectsFilter=null, includeData=true } = opts;
+  const list = subjectsFilter ? subjectsFilter : subjects();
+  const flashcards = {}, notes = {};
+  list.forEach(s=>{
+    flashcards[s] = (DATA.flashcards[s]||[]).map(c=> includeData ? {...c} : {
+      question:c.question, answer:c.answer, review_count:0, last_reviewed:null, created:c.created
+    });
+    notes[s] = (DATA.notes[s]||[]).map(n=>({...n}));
+  });
+  let study_sessions = [];
+  if(includeData){
+    study_sessions = DATA.study_sessions.filter(s => !subjectsFilter || subjectsFilter.includes(s.subject));
+  }
+  return {
+    type: "d4n_study_backup", version: 2,
+    exported_at: new Date().toISOString(),
+    flashcards, notes, study_sessions
+  };
+}
+function downloadJSON(payload, filenameBase){
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const stamp = new Date().toISOString().slice(0,10);
+  a.href = url; a.download = `${filenameBase}-${stamp}.json`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=> URL.revokeObjectURL(url), 1000);
+}
+function exportFull(){ downloadJSON(buildExportPayload({includeData:true}), "d4n-study-full-backup"); }
+function exportNoData(){ downloadJSON(buildExportPayload({includeData:false}), "d4n-study-backup-nodata"); }
+function exportSubject(subject, includeData){ downloadJSON(buildExportPayload({subjectsFilter:[subject], includeData}), `d4n-study-${slug(subject)}`); }
+
+function downloadExampleNotes(){
+  const example = {
+    notes: [
+      { title: "Example Topic Title",
+        content: "This is where your notes go.\n\nYou can use multiple lines, blank lines,\nand any punctuation you like.\n\nTip: each entry in the array becomes one topic in Read Mode." },
+      { title: "Another Topic",
+        content: "Here's a second topic so you can see how multiple notes look when imported.\n\nSave this file, replace the text, and import it back." }
+    ]
+  };
+  downloadJSON(example, "d4n-example-notes");
+}
+function downloadExampleBackup(){
+  const example = {
+    type: "d4n_study_backup", version: 2, exported_at: new Date().toISOString(),
+    flashcards: {
+      "Example Subject": [
+        { question: "What is a flashcard?",
+          answer: "A card with a question on one side and the answer on the other.",
+          review_count: 0, last_reviewed: null, created: new Date().toISOString() }
+      ]
+    },
+    notes: {
+      "Example Subject": [
+        { id: "note_example", title: "Example Topic", content: "Sample notes content.", created: new Date().toISOString() }
+      ]
+    },
+    study_sessions: []
+  };
+  downloadJSON(example, "d4n-example-backup");
+}
+
+function mergeImportedData(incoming){
+  const stats = { newSubjects:0, newCards:0, skippedCards:0, newSessions:0, skippedSessions:0, newNotes:0, skippedNotes:0 };
+  const incomingFlashcards = incoming.flashcards || {};
+  for(const subject in incomingFlashcards){
+    const incomingCards = incomingFlashcards[subject] || [];
+    if(!DATA.flashcards[subject]){ DATA.flashcards[subject] = []; stats.newSubjects++; }
+    const existing = DATA.flashcards[subject];
+    const existingQuestions = new Set(existing.map(c => normQ(c.question)));
+    incomingCards.forEach(card=>{
+      const key = normQ(card.question);
+      if(existingQuestions.has(key)){ stats.skippedCards++; return; }
+      existing.push({
+        question: card.question, answer: card.answer,
+        review_count: card.review_count || 0,
+        last_reviewed: card.last_reviewed || null,
+        created: card.created || new Date().toISOString()
+      });
+      existingQuestions.add(key); stats.newCards++;
+    });
+  }
+  const incomingNotes = incoming.notes || {};
+  for(const subject in incomingNotes){
+    if(!DATA.notes[subject]) DATA.notes[subject] = [];
+    if(!DATA.flashcards[subject]) DATA.flashcards[subject] = [];
+    const existingKeys = new Set(DATA.notes[subject].map(n => normQ(n.title)+"|"+normQ(n.content).slice(0,60)));
+    (incomingNotes[subject]||[]).forEach(n=>{
+      const key = normQ(n.title)+"|"+normQ(n.content).slice(0,60);
+      if(existingKeys.has(key)){ stats.skippedNotes++; return; }
+      DATA.notes[subject].push({
+        id: n.id || genId('note'), title: n.title || "Untitled",
+        content: n.content || "", created: n.created || new Date().toISOString()
+      });
+      existingKeys.add(key); stats.newNotes++;
+    });
+  }
+  const incomingSessions = incoming.study_sessions || [];
+  const existingSessionKeys = new Set(DATA.study_sessions.map(s => `${s.subject}|${s.date}`));
+  incomingSessions.forEach(s=>{
+    const key = `${s.subject}|${s.date}`;
+    if(existingSessionKeys.has(key)){ stats.skippedSessions++; return; }
+    DATA.study_sessions.push(s); existingSessionKeys.add(key); stats.newSessions++;
+  });
+  DATA.study_sessions.sort((a,b)=> new Date(a.date) - new Date(b.date));
+  saveData(DATA);
+  return stats;
+}
+
+function parseImportedNotesFile(file, cb){
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    const text = ev.target.result;
+    let notesToAdd = [];
+    if(file.name.toLowerCase().endsWith('.json')){
+      let parsed;
+      try{ parsed = JSON.parse(text); }
+      catch(e){ cb(null, "Couldn't parse that JSON file."); return; }
+      if(Array.isArray(parsed)) notesToAdd = parsed;
+      else if(parsed.notes && Array.isArray(parsed.notes)) notesToAdd = parsed.notes;
+      else if(parsed.title || parsed.content) notesToAdd = [parsed];
+      else { cb(null, "Not a recognized notes file."); return; }
+    } else {
+      const title = file.name.replace(/\.[^/.]+$/, "");
+      notesToAdd = [{title, content:text}];
+    }
+    cb(notesToAdd, null);
+  };
+  reader.onerror = ()=> cb(null, "Couldn't read that file.");
+  reader.readAsText(file);
+}
+
+/* ============================================================
+   TTS
+   ============================================================ */
+function ttsPlay(subject, noteId){
+  const note = getNote(subject, noteId);
+  if(!note || !('speechSynthesis' in window)){ toast("Text-to-speech isn't available here"); return; }
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(note.content);
+  utter.onend = ()=>{ ttsState='stopped'; ttsNoteId=null; ttsNoteTitle=null; renderFloatBar(); if(nav.page==='read_view') render(); };
+  utter.onerror = ()=>{ ttsState='stopped'; ttsNoteId=null; ttsNoteTitle=null; renderFloatBar(); };
+  ttsNoteId = noteId; ttsNoteTitle = note.title; ttsState = 'playing';
+  window.speechSynthesis.speak(utter);
+  renderFloatBar();
+}
+function ttsPauseResume(){
+  if(!('speechSynthesis' in window)) return;
+  if(ttsState==='playing'){ window.speechSynthesis.pause(); ttsState='paused'; }
+  else if(ttsState==='paused'){ window.speechSynthesis.resume(); ttsState='playing'; }
+  renderFloatBar();
+}
+function ttsStop(){
+  if('speechSynthesis' in window) window.speechSynthesis.cancel();
+  ttsState='stopped'; ttsNoteId=null; ttsNoteTitle=null;
+  renderFloatBar();
+}
+
+/* ============================================================
+   TIMER
+   ============================================================ */
+function timerRemaining(){
+  if(!TIMER.active) return 0;
+  if(TIMER.paused) return TIMER.pausedRemaining;
+  return Math.max(0, Math.ceil((TIMER.endsAt - Date.now())/1000));
+}
+function fmtMMSS(sec){
+  sec = Math.max(0, Math.round(sec||0));
+  return `${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`;
+}
+function chirp(){
+  try{
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    const o = ctx.createOscillator(); const g = ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.frequency.value = 1046; g.gain.value = 0.09;
+    o.start(); setTimeout(()=>{ try{o.stop(); ctx.close();}catch(e){} }, 180);
+  }catch(e){}
+  if(navigator.vibrate) navigator.vibrate(150);
+}
+function startChirping(){ if(chirpInterval) return; chirp(); chirpInterval = setInterval(chirp, 1200); }
+function stopChirping(){ clearInterval(chirpInterval); chirpInterval = null; }
+function startTimer(mins){
+  stopChirping();
+  TIMER = {active:true, endsAt: Date.now()+mins*60000, totalSeconds: mins*60,
+           alarming:false, paused:false, hidden:false, pausedRemaining:0};
+  saveTimer();
+  navStack = [];
+  if(windowedActive()){
+    const existing = WM.windows.find(w => w.page === 'timer_active');
+    if(existing){ existing.z = ++WM.zCounter; WM.focusedId = existing.id; saveWM(); render(); return; }
+    wmReplace('timer_active', {});
+  } else {
+    goto("timer_active", {}, false);
+  }
+}
+function stopTimer(){ TIMER = blankTimer(); saveTimer(); stopChirping(); renderFloatBar(); }
+function pauseTimer(){
+  if(!TIMER.active || TIMER.paused || TIMER.alarming) return;
+  TIMER.pausedRemaining = timerRemaining(); TIMER.paused = true;
+  saveTimer(); renderFloatBar();
+}
+function resumeTimer(){
+  if(!TIMER.active || !TIMER.paused) return;
+  TIMER.endsAt = Date.now() + (TIMER.pausedRemaining||0)*1000;
+  TIMER.paused = false;
+  saveTimer(); renderFloatBar();
+}
+function hideTimerBar(){ if(!TIMER.active) return; TIMER.hidden = true; saveTimer(); renderFloatBar(); }
+function showTimerBar(){ TIMER.hidden = false; saveTimer(); renderFloatBar(); }
+function tickTimer(){
+  if(!TIMER.active || TIMER.paused) return;
+  const rem = timerRemaining();
+  if(rem<=0 && !TIMER.alarming){
+    TIMER.alarming = true; TIMER.hidden = false;
+    saveTimer(); startChirping();
+  }
+  const onTimerPage = windowedActive()
+    ? (wmWindowById(CURRENT_WIN_ID)?.page === 'timer_active')
+    : (nav.page === 'timer_active');
+  if(onTimerPage) render();
+  else renderFloatBar();
+}
+
+/* ============================================================
+   QUIZ TIMER
+   ============================================================ */
+function quizRemaining(p){
+  if(!p || !p.timerMode || p.timerMode==='none') return 0;
+  if(p.checked && typeof p.frozenRemaining === 'number') return p.frozenRemaining;
+  if(p.timerMode==='perq') return Math.max(0, Math.ceil(((p.qEndsAt||0) - Date.now())/1000));
+  return Math.max(0, Math.ceil(((p.quizEndsAt||0) - Date.now())/1000));
+}
+function tickQuizTimer(){
+  let page = nav.page, params = nav.params;
+  if(windowedActive()){
+    const w = wmWindowById(CURRENT_WIN_ID);
+    if(w){ page = w.page; params = w.params; }
+  }
+  if(page !== 'quiz_session') return;
+  if(!params.timerMode || params.timerMode==='none') return;
+  if(params.checked) return;
+  const el = document.getElementById('quizTimer');
+  const rem = quizRemaining(params);
+  if(el){
+    el.textContent = `⏱ ${fmtMMSS(rem)}`;
+    el.className = 'quiz-timer' + (rem<=5 ? ' danger' : (rem<=10 ? ' warn' : ''));
+  }
+  if(rem <= 0){
+    if(params.timerMode === 'perq') quizTimeExpired();
+    else endQuizTimeUp();
+  }
+}
+function quizTimeExpired(){
+  let params = nav.params;
+  if(windowedActive()){
+    const w = wmWindowById(CURRENT_WIN_ID);
+    if(w) params = w.params;
+  }
+  if(params.checked) return;
+  const input = document.getElementById('quizAnswerInput');
+  const val = input ? input.value.trim() : '';
+  if(val){ submitQuizAnswer(); }
+  else {
+    params.userAnswer = ''; params.checked = true; params.result = 'wrong';
+    params.timedOut = true; params.frozenRemaining = 0;
+    render();
+  }
+}
+function endQuizTimeUp(){
+  let params = nav.params;
+  if(windowedActive()){
+    const w = wmWindowById(CURRENT_WIN_ID);
+    if(w) params = w.params;
+  }
+  if(params.ended) return;
+  params.ended = true;
+  const total = params.order.length;
+  DATA.study_sessions.push({
+    subject: params.subject, date: new Date().toISOString(),
+    score: (params.score/total)*100, cards_studied: total,
+    correct_answers: params.score, type:'quiz'
+  });
+  saveData(DATA);
+  navStack = [];
+  const comp = {subject:params.subject, score:params.score, total, timeUp:true};
+  if(windowedActive()){
+    const w = wmWindowById(CURRENT_WIN_ID);
+    if(w){ w.page = 'quiz_complete'; w.params = comp; saveWM(); render(); return; }
+  }
+  goto("quiz_complete", comp, false);
+}
+
+/* ============================================================
+   ANSWER MATCHING
+   ============================================================ */
+function levenshtein(a, b){
+  const m = a.length, n = b.length;
+  if(m===0) return n; if(n===0) return m;
+  let prev = new Array(n+1), curr = new Array(n+1);
+  for(let j=0;j<=n;j++) prev[j]=j;
+  for(let i=1;i<=m;i++){
+    curr[0]=i;
+    for(let j=1;j<=n;j++){
+      const cost = a[i-1]===b[j-1] ? 0 : 1;
+      curr[j] = Math.min(prev[j]+1, curr[j-1]+1, prev[j-1]+cost);
+    }
+    [prev,curr]=[curr,prev];
+  }
+  return prev[n];
+}
+function fuzzRatio(a, b){
+  a = a||""; b = b||"";
+  if(a.length===0 && b.length===0) return 100;
+  const dist = levenshtein(a,b);
+  const maxLen = a.length + b.length;
+  if(maxLen===0) return 100;
+  return Math.round((1 - dist/maxLen) * 100);
+}
+const STOP_WORDS = new Set(["a","an","the","of","to","for","and","or","in","on","at","by","with","as","from","into","than","then","so","that","this","it","its","is","are","was","were","be","been","being","you","your","they","them","their","he","she","him","his","her","we","our","i","me","my","there","which","who","whom","also","such"]);
+function tokenizeAnswer(s){
+  return (s||"").toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/)
+    .filter(w => w && (w.length > 1 || /\d/.test(w)) && !STOP_WORDS.has(w));
+}
+function tokensSimilar(a, b){
+  if(a === b) return true;
+  if(a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a))) return true;
+  if(a.length >= 5 && b.length >= 5 && fuzzRatio(a, b) >= 78) return true;
+  return false;
+}
+function answerSimilarity(user, expected){
+  const u = (user||"").trim(); const e = (expected||"").trim();
+  if(!u) return 0;
+  const seq = fuzzRatio(u.toLowerCase(), e.toLowerCase());
+  const et = tokenizeAnswer(e); const ut = tokenizeAnswer(u);
+  if(!et.length || !ut.length) return seq;
+  const usedU = new Set(); let matched = 0;
+  et.forEach(t=>{
+    for(let i=0;i<ut.length;i++){
+      if(usedU.has(i)) continue;
+      if(tokensSimilar(t, ut[i])){ matched++; usedU.add(i); break; }
+    }
+  });
+  const precision = matched / ut.length;
+  const recall = matched / et.length;
+  const f1 = (precision + recall) > 0 ? (2*precision*recall)/(precision+recall) : 0;
+  return Math.max(seq, Math.round(f1 * 100));
+}
+
+/* ============================================================
+   SHELL
+   ============================================================ */
+function shell(titleHTML, subtitle, bodyHTML, opts={}){
+  const path = opts.path || "~/study";
+  const isHome = opts.isHome;
+  const showBack = !windowedActive() && !isHome && nav.page !== "home";
+  const winId = CURRENT_WIN_ID || "";
+  return `
+    <div class="term" data-win-id="${esc(winId)}">
+      <div class="titlebar">
+        <div class="dot r" data-dot="0"></div><div class="dot y" data-dot="1"></div><div class="dot g" data-dot="2"></div>
+        <div class="path">${esc(path)}</div>
+        ${showBack ? `<button class="titlebar-back" data-titlebar-back="1" aria-label="Back">‹ Back</button>` : ""}
+      </div>
+      <div class="screen">
+        <div class="brand">D4N's Study Assistant</div>
+        <h1 class="page-title">${titleHTML}<span class="cursor"></span></h1>
+        ${subtitle ? `<div class="page-sub">${esc(subtitle)}</div>` : ""}
+        ${bodyHTML}
+        <div class="footer-note">your data stays on this device — nothing is uploaded</div>
+      </div>
+    </div>
+  `;
+}
+function goto(page, params={}, push=true){
+  if(push && !windowedActive()) navStack.push({page: nav.page, params: nav.params});
+  const merged = Object.assign({}, params);
+  if(merged.subject===undefined && nav.params && nav.params.subject!==undefined){
+    merged.subject = nav.params.subject;
+  }
+  nav = {page, params: merged};
+  render();
+}
+function back(){
+  if(windowedActive() && CURRENT_WIN_ID){
+    const w = wmWindowById(CURRENT_WIN_ID);
+    if(w && !w.isHome){ wmClose(CURRENT_WIN_ID); return; }
+  }
+  const prev = navStack.pop();
+  nav = prev || {page:"home", params:{}};
+  render();
+}
+function toast(msg){
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(t._timer);
+  t._timer = setTimeout(()=> t.classList.remove("show"), 1800);
+}
+
+/* Windowed navigation dispatcher */
+function wmHandleGo(page, params, btn){
+  const cur = wmWindowById(CURRENT_WIN_ID);
+  if(!cur) return;
+
+  if(page === 'select_subject'){
+    if(wmFocusExisting('select_subject', cur.id)) return;
+    const homeWin = WM.windows.find(w => w.isHome);
+    wmOpen('select_subject', {}, homeWin ? homeWin.id : null);
+    render();
+    return;
+  }
+
+  if(page === 'subject_menu' && cur.page === 'select_subject'){
+    const existing = WM.windows.find(w => w.page === 'subject_menu');
+    if(existing){
+      const oldSubject = existing.params.subject;
+      const newSubject = params.subject;
+      if(oldSubject !== newSubject){
+        wmPropagateSubject(existing.id, oldSubject, newSubject);
+        saveWM();
+        toast(`Switched to ${newSubject}`);
+      }
+      existing.z = ++WM.zCounter;
+      WM.focusedId = existing.id;
+      saveWM();
+      render();
+      return;
+    }
+    wmOpen(page, params, cur.id);
+    render();
+    return;
+  }
+
+  if(btn && btn.dataset.clearstack){
+    wmGoBackTo(page, params);
+    return;
+  }
+
+  wmOpen(page, params, cur.id);
+  render();
+}
+
+/* ============================================================
+   PAGE MAP
+   ============================================================ */
+const PAGE_MAP = {
+  home: pageHome, select_subject: pageSelectSubject, new_subject_form: pageNewSubjectForm,
+  subject_menu: pageSubjectMenu, flashcard_menu: pageFlashcardMenu, add_card_form: pageAddCardForm,
+  card_list_view: pageCardListView, manage_card_list: pageManageCardList, edit_card_form: pageEditCardForm,
+  delete_choice: pageDeleteChoice, delete_card_list: pageDeleteCardList,
+  study_session: pageStudySession, study_complete: pageStudyComplete,
+  read_menu: pageReadMenu, read_new_choice: pageReadNewChoice, read_write_form: pageReadWriteForm,
+  read_import: pageReadImport, read_view: pageReadView, read_edit_list: pageReadEditList,
+  quiz_settings: pageQuizSettings, quiz_session: pageQuizSession, quiz_complete: pageQuizComplete,
+  subject_progress: pageSubjectProgress, timer: pageTimer, timer_active: pageTimerActive,
+  progress: pageProgress, sync_data: pageSyncData, settings: pageSettings
+};
+
+function render(){
+  const app = document.getElementById("app");
+  seqState = {};
+
+  if(windowedActive()){
+    renderDesktop();
+    renderFloatBar();
+    return;
+  }
+  app.classList.remove('windowed');
+  CURRENT_WIN_ID = null;
+
+  const fn = PAGE_MAP[nav.page] || pageHome;
+  app.innerHTML = fn();
+  attachHandlers();
+  renderFloatBar();
+  window.scrollTo(0,0);
+}
+
+function renderDesktop(){
+  const app = document.getElementById("app");
+  app.classList.add('windowed');
+  const home = WM.windows.find(w => w.isHome);
+  if(!WM.focusedId || !wmWindowById(WM.focusedId)) WM.focusedId = home ? home.id : null;
+
+  let html = `<div id="desktop"><svg id="wmLines"></svg>`;
+  WM.windows.forEach(w => {
+    const focused = w.id === WM.focusedId;
+    const savedNav = nav;
+    nav = { page: w.page, params: w.params };
+    CURRENT_WIN_ID = w.id;
+    const fn = PAGE_MAP[w.page] || pageHome;
+    const inner = fn();
+    nav = savedNav;
+    html += `<div class="wm-window ${focused?'focused':''}" id="win-${w.id}" data-window-id="${w.id}"
+      style="left:${w.x}px; top:${w.y}px; z-index:${w.z};">${inner}</div>`;
+  });
+  html += `</div>`;
+  html += `<button class="home-pill" id="wmHomePill">⌂ Home</button>`;
+  app.innerHTML = html;
+  CURRENT_WIN_ID = WM.focusedId;
+  attachHandlers();
+  attachWindowHandlers();
+  requestAnimationFrame(drawLines);
+}
+
+function drawLines(){
+  const svg = document.getElementById('wmLines');
+  if(!svg) return;
+  const rect = svg.getBoundingClientRect();
+  svg.setAttribute('viewBox', `0 0 ${rect.width} ${rect.height}`);
+  svg.setAttribute('preserveAspectRatio', 'none');
+  let html = '';
+  WM.windows.forEach(w => {
+    if(!w.parentId) return;
+    const parent = wmWindowById(w.parentId);
+    if(!parent) return;
+    const pw = document.getElementById(`win-${parent.id}`);
+    const cw = document.getElementById(`win-${w.id}`);
+    if(!pw || !cw) return;
+    const pR = pw.getBoundingClientRect();
+    const cR = cw.getBoundingClientRect();
+    const dR = svg.getBoundingClientRect();
+    const x1 = pR.left - dR.left + pR.width/2;
+    const y1 = pR.top - dR.top + pR.height;
+    const x2 = cR.left - dR.left + cR.width/2;
+    const y2 = cR.top - dR.top;
+    const midY = (y1 + y2) / 2;
+    html += `<path d="M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}"
+      stroke="#5ee6d0" stroke-width="1.5" fill="none" opacity="0.45" stroke-dasharray="6 4"/>`;
+  });
+  svg.innerHTML = html;
+}
+
+/* ============================================================
+   PAGES
+   ============================================================ */
+function pageHome(){
+  const body = `
+    <div class="menu">
+      <button class="menu-item" data-go="select_subject">
+        <span class="num">1.</span><span class="icon">📚</span><span class="label">Select Subject</span>
+        <span class="meta">${subjects().length} subjects</span>
+      </button>
+      <button class="menu-item" data-go="timer"><span class="num">2.</span><span class="icon">⏰</span><span class="label">Set Study Timer</span></button>
+      <button class="menu-item" data-go="progress">
+        <span class="num">3.</span><span class="icon">📊</span><span class="label">View Progress</span>
+        <span class="meta">${DATA.study_sessions.length} sessions</span>
+      </button>
+      <button class="menu-item" data-go="sync_data"><span class="num">4.</span><span class="icon">🔄</span><span class="label">Import / Export</span></button>
+    </div>
+  `;
+  return shell("MAIN MENU", "", body, {path:"~/study", isHome:true});
+}
+
+function pageSelectSubject(){
+  const subs = subjects();
+  let body = `<div class="menu">
+    <button class="menu-item accent" data-go="new_subject_form">
+      <span class="icon">➕</span><span class="label">Add New Subject</span>
+    </button>`;
+  if(subs.length===0){
+    body += `</div>` + emptyState("📭","No subjects yet.","Add one above to get started.");
+  }else{
+    subs.forEach((s,i)=>{
+      body += `<button class="menu-item" data-go="subject_menu" data-subject="${esc(s)}">
+        <span class="num">${i+1}.</span><span class="label">${esc(s)}</span>
+        <span class="meta">${cardCount(s)} cards · ${notesCount(s)} notes</span>
+      </button>`;
+    });
+    body += `</div>`;
+  }
+  body += backBtn("home","Back to Main Menu");
+  return shell("SELECT SUBJECT", "", body, {path:"~/study/subjects"});
+}
+
+function pageNewSubjectForm(){
+  const body = `
+    <label class="field-label">New subject name</label>
+    <input type="text" id="newSubjectName" placeholder="e.g. Mathematics" autofocus>
+    <div class="btn-row">
+      <button class="btn btn-ghost" data-back="1">Cancel</button>
+      <button class="btn btn-primary" id="newSubjectGo">Continue</button>
+    </div>
+  `;
+  return shell("CREATE SUBJECT", "", body, {path:"~/study/subjects/new"});
+}
+
+function pageSubjectMenu(){
+  const subject = nav.params.subject;
+  const cc = cardCount(subject);
+  const studyBtn = cc>0
+    ? `<button class="menu-item" data-study-subject="${esc(subject)}"><span class="num">2.</span><span class="icon">📖</span><span class="label">Study Flashcards</span></button>`
+    : `<button class="menu-item" style="opacity:.55;" data-go="flashcard_menu"><span class="num">2.</span><span class="icon">📖</span><span class="label">Study Flashcards</span><span class="meta">Add cards first</span></button>`;
+  const quizBtn = cc>=2
+    ? `<button class="menu-item" data-go="quiz_settings"><span class="num">4.</span><span class="icon">🎯</span><span class="label">Take Quiz</span></button>`
+    : `<button class="menu-item" style="opacity:.55;" data-go="flashcard_menu"><span class="num">4.</span><span class="icon">🎯</span><span class="label">Take Quiz</span><span class="meta">Need 2+ cards</span></button>`;
+  const body = `
+    <div class="menu">
+      <button class="menu-item" data-go="flashcard_menu"><span class="num">1.</span><span class="icon">📝</span><span class="label">Flashcard Manager</span><span class="meta">${cc} cards</span></button>
+      ${studyBtn}
+      <button class="menu-item" data-go="read_menu"><span class="num">3.</span><span class="icon">🔊</span><span class="label">Read Mode</span><span class="meta">${notesCount(subject)} notes</span></button>
+      ${quizBtn}
+      <button class="menu-item" data-go="subject_progress"><span class="num">5.</span><span class="icon">📊</span><span class="label">View Progress</span></button>
+      <button class="menu-item" data-go="select_subject" data-clearstack="1"><span class="num">6.</span><span class="icon">↩️</span><span class="label">Back to Subjects</span></button>
+    </div>
+  `;
+  return shell(esc(subject).toUpperCase(), "Subject menu", body, {path:`~/study/${slug(subject)}`});
+}
+
+function pageFlashcardMenu(){
+  const subject = nav.params.subject;
+  const body = `
+    <div class="page-sub" style="margin-top:-6px;">Subject: <strong style="color:var(--amber);">${esc(subject)}</strong></div>
+    <div class="menu">
+      <button class="menu-item accent" data-go="add_card_form"><span class="num">1.</span><span class="icon">➕</span><span class="label">Add New Flashcard</span></button>
+      <button class="menu-item" data-go="card_list_view"><span class="num">2.</span><span class="icon">👀</span><span class="label">View All Cards</span><span class="meta">${cardCount(subject)} cards</span></button>
+      <button class="menu-item" data-go="manage_card_list"><span class="num">3.</span><span class="icon">✏️</span><span class="label">Edit a Flashcard</span></button>
+      <button class="menu-item danger" data-go="delete_choice"><span class="num">4.</span><span class="icon">🗑️</span><span class="label">Delete Subject / Flashcard</span></button>
+      <button class="menu-item" data-go="subject_menu" data-clearstack="1"><span class="num">5.</span><span class="icon">↩️</span><span class="label">Back to Subject Menu</span></button>
+    </div>
+  `;
+  return shell("FLASHCARD MANAGER", "", body, {path:`~/study/${slug(subject)}/flashcards`});
+}
+
+function pageAddCardForm(){
+  const subject = nav.params.subject;
+  const body = `
+    <div class="page-sub" style="margin-top:-6px;">Adding to: <strong style="color:var(--amber);">${esc(subject)}</strong></div>
+    <label class="field-label">Question</label>
+    <textarea id="cardQuestion" placeholder="What is...?" autofocus></textarea>
+    <label class="field-label">Answer</label>
+    <textarea id="cardAnswer" placeholder="The answer is..."></textarea>
+    <div class="btn-row">
+      <button class="btn btn-ghost" data-go="flashcard_menu" data-clearstack="1">Done</button>
+      <button class="btn btn-primary" id="addCardGo">Add Card</button>
+    </div>
+    <div class="page-sub" style="margin-top:10px;">Card added automatically saves — add another or tap Done.</div>
+  `;
+  return shell("ADD NEW FLASHCARD", "", body, {path:`~/study/${slug(subject)}/add`});
+}
+
+function pageCardListView(){
+  const subject = nav.params.subject;
+  const cards = DATA.flashcards[subject] || [];
+  let body;
+  if(cards.length===0){
+    body = emptyState("📭","No cards yet.","Add some flashcards to get started.");
+  }else{
+    const rows = cards.map(c=>`
+      <div class="list-row"><span class="lr-q">${esc(c.question)}</span><span class="lr-meta">${c.review_count||0}× reviewed</span></div>`).join("");
+    body = `${rows}<hr class="div"><div class="page-sub" style="margin-bottom:0;">Total cards: ${cards.length}</div>`;
+  }
+  body += backBtn("flashcard_menu","Back");
+  return shell("ALL CARDS", subject, body, {path:`~/study/${slug(subject)}/cards`});
+}
+
+function pageManageCardList(){
+  const subject = nav.params.subject;
+  const cards = DATA.flashcards[subject] || [];
+  if(cards.length===0){
+    return shell("EDIT FLASHCARD", subject, emptyState("📭","No cards in this subject.","") + backBtn("flashcard_menu","Back to menu"), {path:`~/study/${slug(subject)}/edit/list`});
+  }
+  let body = `<div class="page-sub" style="margin-top:-6px;">Tap a card to fix spelling or wording</div><div class="menu">`;
+  cards.forEach((card,i)=>{
+    body += `<button class="menu-item" data-pick-edit-card="${i}"><span class="num">${i+1}.</span><span class="label">${esc(card.question)}</span></button>`;
+  });
+  body += `</div>`;
+  body += backBtn("flashcard_menu", "Back to menu");
+  return shell("EDIT FLASHCARD", subject, body, {path:`~/study/${slug(subject)}/edit/list`});
+}
+
+function pageEditCardForm(){
+  const { subject, cardIdx } = nav.params;
+  const card = (DATA.flashcards[subject]||[])[cardIdx] || {question:'', answer:''};
+  const body = `
+    <div class="page-sub" style="margin-top:-6px;">Editing card in: <strong style="color:var(--amber);">${esc(subject)}</strong></div>
+    <label class="field-label">Question</label>
+    <textarea id="editQuestion" autofocus>${esc(card.question)}</textarea>
+    <label class="field-label">Answer</label>
+    <textarea id="editAnswer">${esc(card.answer)}</textarea>
+    <div class="btn-row">
+      <button class="btn btn-ghost" data-back="1">Cancel</button>
+      <button class="btn btn-primary" id="saveEditBtn">Save Changes</button>
+    </div>
+  `;
+  return shell("EDIT FLASHCARD", "", body, {path:`~/study/${slug(subject)}/edit/card`});
+}
+
+function pageDeleteChoice(){
+  const subject = nav.params.subject;
+  const n = cardCount(subject);
+  const body = `
+    <div class="page-sub" style="margin-top:-6px;">Subject: <strong style="color:var(--amber);">${esc(subject)}</strong></div>
+    <div class="menu">
+      <button class="menu-item danger" id="delEntireSubject"><span class="num">1.</span><span class="icon">🗑️</span><span class="label">Delete entire subject (${n} cards, ${notesCount(subject)} notes)</span></button>
+      <button class="menu-item" data-go="delete_card_list"><span class="num">2.</span><span class="icon">🃏</span><span class="label">Delete a specific card</span></button>
+      <button class="menu-item" data-go="flashcard_menu" data-clearstack="1"><span class="num">3.</span><span class="icon">↩️</span><span class="label">Cancel</span></button>
+    </div>
+  `;
+  return shell("DELETE", "", body, {path:`~/study/${slug(subject)}/delete`});
+}
+
+function pageDeleteCardList(){
+  const subject = nav.params.subject;
+  const cards = DATA.flashcards[subject] || [];
+  if(cards.length===0){
+    return shell("DELETE CARD", subject, emptyState("📭","No cards in this subject.","") + backBtn("flashcard_menu","Back to menu"), {path:`~/study/${slug(subject)}/delete/card`});
+  }
+  let body = `<div class="menu">`;
+  cards.forEach((card,i)=>{
+    body += `<button class="menu-item" data-del-card-idx="${i}"><span class="num">${i+1}.</span><span class="label">${esc(card.question)}</span></button>`;
+  });
+  body += `<button class="menu-item" data-back="1"><span class="num">${cards.length+1}.</span><span class="icon">↩️</span><span class="label">Cancel</span></button></div>`;
+  return shell("DELETE CARD", subject, body, {path:`~/study/${slug(subject)}/delete/card`});
+}
+
+function pageStudySession(){
+  const { subject, order, idx, revealed } = nav.params;
+  const cards = DATA.flashcards[subject] || [];
+  const total = order ? order.length : 0;
+  if(!total || !order || idx >= total){
+    return shell("STUDYING", subject, emptyState("📭","Nothing to study.","Add flashcards to this subject first.") + backBtn("subject_menu","Back to Subject Menu"), {path:`~/study/${slug(subject)}/study`});
+  }
+  const card = cards[order[idx]];
+  if(!card){
+    return shell("STUDYING", subject, emptyState("📭","Card not found.","") + backBtn("subject_menu","Back to Subject Menu"), {path:`~/study/${slug(subject)}/study`});
+  }
+  const pct = ((idx+1)/total)*100;
+
+  let qa;
+  if(!revealed){
+    qa = `
+      <div class="card"><div class="qa-label q">❓ Question</div><div class="qa-text">${esc(card.question)}</div></div>
+      <button class="btn btn-primary" id="revealBtn">Reveal answer</button>
+    `;
+  }else{
+    qa = `
+      <div class="card">
+        <div class="qa-label q">❓ Question</div>
+        <div class="qa-text" style="margin-bottom:14px;">${esc(card.question)}</div>
+        <hr class="div" style="margin:10px 0;">
+        <div class="qa-label a">✅ Answer</div>
+        <div class="qa-text">${esc(card.answer)}</div>
+      </div>
+      <div class="page-sub" style="margin-bottom:8px;">Did you get it right?</div>
+      <div class="yn-row">
+        <button class="btn btn-danger" data-study-answer="n">✗ No</button>
+        <button class="btn btn-primary" data-study-answer="y" style="background:var(--green); border-color:var(--green);">✓ Yes</button>
+      </div>
+    `;
+  }
+
+  const body = `
+    <div class="progress-line"><span>Card ${idx+1} of ${total}</span><span>${esc(subject)}</span></div>
+    <div class="bar-track"><div class="bar-fill cyan" style="width:${pct}%;"></div></div>
+    ${qa}
+  `;
+  return shell("STUDYING", subject.toUpperCase(), body, {path:`~/study/${slug(subject)}/study`});
+}
+
+function pageStudyComplete(){
+  const { subject, correct, total } = nav.params;
+  const pct = total>0 ? (correct/total)*100 : 0;
+  const body = scoreBlock(correct, total, pct) + `
+    <div class="btn-row">
+      <button class="btn btn-ghost" data-go="subject_menu" data-clearstack="1">Subject menu</button>
+      <button class="btn btn-primary" data-study-subject="${esc(subject)}" data-clearstack="1">Study again</button>
+    </div>
+  `;
+  return shell("SESSION COMPLETE!", subject, body, {path:`~/study/${slug(subject)}/study/done`});
+}
+
+function pageReadMenu(){
+  const subject = nav.params.subject;
+  const notes = notesFor(subject);
+  let body = `<div class="menu">
+    <button class="menu-item accent" data-go="read_new_choice"><span class="icon">➕</span><span class="label">New Topic</span></button>`;
+  if(notes.length===0){
+    body += `</div>` + emptyState("📭","No notes yet.","Write or import your first topic.");
+  }else{
+    notes.forEach((n,i)=>{
+      body += `<button class="menu-item" data-go="read_view" data-note-id="${esc(n.id)}">
+        <span class="num">${i+1}.</span><span class="label">${esc(n.title)}</span>
+        <span class="meta">${n.content.length} chars</span>
+      </button>`;
+    });
+    body += `</div>`;
+  }
+  if(notes.length > 0){
+    body += `<div class="menu" style="margin-top:8px;">
+      <button class="menu-item" data-go="read_edit_list"><span class="icon">✏️</span><span class="label">Edit Notes</span><span class="meta">edit or delete</span></button>
+    </div>`;
+  }
+  body += backBtn("subject_menu","Back to Subject Menu");
+  return shell("READ MODE", subject, body, {path:`~/study/${slug(subject)}/read`});
+}
+
+function pageReadEditList(){
+  const subject = nav.params.subject;
+  const notes = notesFor(subject);
+  if(notes.length === 0){
+    return shell("EDIT NOTES", subject,
+      emptyState("📭","No notes to edit.","Write a topic first.") + backBtn("read_menu","Back to Read Mode"),
+      {path:`~/study/${slug(subject)}/read/edit`});
+  }
+  let body = `<div class="page-sub" style="margin-top:-6px;">Edit or delete an existing topic</div>`;
+  notes.forEach(n=>{
+    body += `
+      <div class="note-row">
+        <span class="nr-title">${esc(n.title)}</span>
+        <button class="mini-btn" data-edit-note="${esc(n.id)}">✏️ Edit</button>
+        <button class="mini-btn danger" data-del-note="${esc(n.id)}">🗑️</button>
+      </div>`;
+  });
+  body += backBtn("read_menu","Back to Read Mode");
+  return shell("EDIT NOTES", subject, body, {path:`~/study/${slug(subject)}/read/edit`});
+}
+
+function pageReadNewChoice(){
+  const subject = nav.params.subject;
+  const body = `
+    <div class="menu">
+      <button class="menu-item accent" data-go="read_write_form"><span class="icon">✍️</span><span class="label">Write New Topic</span></button>
+      <button class="menu-item" data-go="read_import"><span class="icon">📥</span><span class="label">Import from File</span></button>
+      <button class="menu-item" data-back="1"><span class="icon">↩️</span><span class="label">Cancel</span></button>
+    </div>
+  `;
+  return shell("NEW TOPIC", subject, body, {path:`~/study/${slug(subject)}/read/new`});
+}
+
+function pageReadWriteForm(){
+  const subject = nav.params.subject;
+  const noteId = nav.params.noteId;
+  const note = noteId ? getNote(subject, noteId) : null;
+  const body = `
+    <label class="field-label">Topic title</label>
+    <input type="text" id="noteTitle" placeholder="e.g. Chapter 3 Summary" value="${note?esc(note.title):''}" autofocus>
+    <label class="field-label">Notes</label>
+    <textarea id="noteContent" placeholder="Write your notes here..." style="min-height:180px;">${note?esc(note.content):''}</textarea>
+    <div class="btn-row">
+      <button class="btn btn-ghost" data-back="1">Cancel</button>
+      <button class="btn btn-primary" id="saveNoteBtn">${note?'Save Changes':'Save Topic'}</button>
+    </div>
+  `;
+  return shell(note?"EDIT TOPIC":"WRITE TOPIC", subject, body, {path:`~/study/${slug(subject)}/read/${note?'edit':'new'}`});
+}
+
+function pageReadImport(){
+  const subject = nav.params.subject;
+  const body = `
+    <div class="card">
+      <div class="qa-text" style="font-size:13.5px; margin-bottom:12px;">
+        Import a .json backup of one or more topics, or a plain .txt file (its filename becomes the title).
+      </div>
+      <input type="file" id="noteImportInput" accept="application/json,.json,text/plain,.txt" style="display:none;">
+      <button class="btn btn-primary" id="noteImportBtn">Choose file</button>
+    </div>
+    <div id="noteImportPreview"></div>
+    ${backBtn("read_menu","Back to Read Mode")}
+  `;
+  return shell("IMPORT TOPIC", subject, body, {path:`~/study/${slug(subject)}/read/import`});
+}
+
+function pageReadView(){
+  const subject = nav.params.subject;
+  const noteId = nav.params.noteId;
+  const note = getNote(subject, noteId);
+  if(!note){
+    return shell("READ MODE", subject, emptyState("😕","Topic not found.","It may have been deleted.")+backBtn("read_menu","Back"), {path:`~/study/${slug(subject)}/read`});
+  }
+  const playing = ttsState==='playing' && ttsNoteId===noteId;
+  const paused = ttsState==='paused' && ttsNoteId===noteId;
+  const ttsBtns = `
+    <div class="tts-controls">
+      <button class="btn btn-primary" id="ttsPlayBtn">${playing?'⏸ Pause':(paused?'▶ Resume':'▶ Play aloud')}</button>
+      <button class="btn btn-ghost" id="ttsStopBtn" ${(!playing&&!paused)?'disabled':''}>⏹ Stop</button>
+    </div>
+  `;
+  const body = `
+    <div class="card">
+      <div class="qa-label" style="color:var(--amber);">${esc(note.title)}</div>
+      <div class="note-content">${esc(note.content)}</div>
+    </div>
+    ${ttsBtns}
+    <div class="btn-row">
+      <button class="btn btn-ghost" data-go="read_write_form" data-note-id="${esc(note.id)}">✏️ Edit</button>
+      <button class="btn btn-danger" id="deleteNoteBtn">🗑️ Delete</button>
+    </div>
+    ${backBtn("read_menu","Back to Topics")}
+  `;
+  return shell("READ MODE", subject, body, {path:`~/study/${slug(subject)}/read/${slug(note.title)}`});
+}
+
+function quizTimerOptsHTML(mode){
+  if(mode === 'perq'){
+    return `<label class="field-label">Seconds per question</label>
+      <input type="number" id="quizPerQSeconds" min="5" max="600" value="30">`;
+  }
+  if(mode === 'whole'){
+    return `<label class="field-label">Minutes for the whole quiz</label>
+      <input type="number" id="quizWholeMinutes" min="1" max="180" value="5">`;
+  }
+  return '';
+}
+
+function pageQuizSettings(){
+  const subject = nav.params.subject;
+  const maxQ = Math.min(10, cardCount(subject));
+  const body = `
+    <div class="page-sub" style="margin-top:-6px;">Subject: <strong style="color:var(--amber);">${esc(subject)}</strong></div>
+    <label class="field-label">Number of questions (1–${maxQ})</label>
+    <input type="number" id="numQuestions" min="1" max="${maxQ}" value="${maxQ}">
+    <label class="field-label">Time limit</label>
+    <select class="subj-select" id="quizTimerMode">
+      <option value="none">No time limit</option>
+      <option value="perq">Per question</option>
+      <option value="whole">Whole quiz</option>
+    </select>
+    <div id="quizTimerOpts"></div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" data-back="1">Cancel</button>
+      <button class="btn btn-primary" id="startQuizBtn">Start Quiz</button>
+    </div>
+  `;
+  return shell("QUIZ SETUP", "", body, {path:`~/study/${slug(subject)}/quiz/setup`});
+}
+
+function pageQuizSession(){
+  const p = nav.params;
+  const { subject, order, idx, userAnswer, checked, result } = p;
+  if(!order || idx >= order.length){
+    return shell("QUIZ", subject, emptyState("😕","Session lost.","Start the quiz again.") + backBtn("subject_menu","Back"), {path:`~/study/${slug(subject)}/quiz`});
+  }
+  const total = order.length;
+  const card = order[idx];
+  const pct = ((idx+1)/total)*100;
+
+  let timerHTML = '';
+  if(p.timerMode && p.timerMode !== 'none'){
+    const rem = p.checked
+      ? (typeof p.frozenRemaining === 'number' ? p.frozenRemaining : 0)
+      : quizRemaining(p);
+    const cls = rem <= 5 ? ' danger' : (rem <= 10 ? ' warn' : '');
+    timerHTML = `<div class="quiz-timer${cls}" id="quizTimer">⏱ ${fmtMMSS(rem)}</div>`;
+  }
+
+  let inner;
+  if(!checked){
+    inner = `
+      <div class="card"><div class="qa-label q">❓ Question</div><div class="qa-text">${esc(card.question)}</div></div>
+      <label class="field-label">Your answer</label>
+      <input type="text" id="quizAnswerInput" placeholder="Type your answer..." autofocus value="${esc(userAnswer||"")}">
+      <button class="btn btn-primary" id="submitAnswerBtn">Submit</button>
+    `;
+  }else{
+    let resultBlock;
+    if(result==="correct"){
+      resultBlock = `<div class="card" style="border-color:#1f4d3a;"><div class="qa-label" style="color:var(--green);">✅ Correct!</div></div>`;
+    }else if(result==="close"){
+      resultBlock = `
+        <div class="card" style="border-color:#5a4a1f;">
+          <div class="qa-label" style="color:var(--amber);">🟡 Close! Expected:</div>
+          <div class="qa-text">${esc(card.answer)}</div>
+          ${userAnswer ? `<hr class="div" style="margin:10px 0;"><div class="qa-label" style="color:var(--grey);">You wrote:</div><div class="qa-text" style="font-size:13.5px; color:var(--grey);">${esc(userAnswer)}</div>` : ''}
+        </div>
+        <div class="page-sub" style="margin-bottom:8px;">Count as correct?</div>
+        <div class="yn-row">
+          <button class="btn btn-danger" data-quiz-override="n">✗ No</button>
+          <button class="btn btn-primary" data-quiz-override="y" style="background:var(--green); border-color:var(--green);">✓ Yes</button>
+        </div>
+      `;
+    }else{
+      resultBlock = `
+        <div class="card" style="border-color:#5a2424;">
+          <div class="qa-label" style="color:var(--red);">❌ ${p.timedOut ? "Time's up!" : "Wrong."} Correct answer:</div>
+          <div class="qa-text">${esc(card.answer)}</div>
+          ${userAnswer ? `<hr class="div" style="margin:10px 0;"><div class="qa-label" style="color:var(--grey);">You wrote:</div><div class="qa-text" style="font-size:13.5px; color:var(--grey);">${esc(userAnswer)}</div>` : ''}
+        </div>
+        <button class="btn btn-primary" id="nextQuestionBtn">Next</button>
+      `;
+    }
+    inner = resultBlock;
+  }
+
+  const body = `
+    <div class="progress-line"><span>Question ${idx+1} of ${total}</span><span>${esc(subject)}</span></div>
+    <div class="bar-track"><div class="bar-fill magenta" style="width:${pct}%;"></div></div>
+    ${timerHTML}
+    ${inner}
+  `;
+  return shell("QUIZ", subject.toUpperCase(), body, {path:`~/study/${slug(subject)}/quiz`});
+}
+
+function pageQuizComplete(){
+  const { subject, score, total, timeUp } = nav.params;
+  const pct = total>0 ? (score/total)*100 : 0;
+  const timeUpCard = timeUp ? `
+    <div class="card" style="border-color:#5a4a1f; text-align:center;">
+      <div class="qa-label" style="color:var(--amber); justify-content:center;">⏰ Time's up!</div>
+      <div class="qa-text" style="font-size:13.5px;">The quiz ended early — unanswered questions counted as wrong.</div>
+    </div>` : '';
+  const body = timeUpCard + scoreBlock(score, total, pct) + `
+    <div class="btn-row">
+      <button class="btn btn-ghost" data-go="subject_menu" data-clearstack="1">Subject menu</button>
+      <button class="btn btn-primary" data-quiz-subject="${esc(subject)}" data-clearstack="1">Quiz again</button>
+    </div>
+  `;
+  return shell("QUIZ COMPLETE!", subject, body, {path:`~/study/${slug(subject)}/quiz/done`});
+}
+
+function pageTimer(){
+  const runningNote = TIMER.active
+    ? `<div class="page-sub">A timer is already running (${fmtMMSS(timerRemaining())} left${TIMER.paused?' · paused':''}). Starting a new one replaces it.</div>`
+    : "";
+  const body = `
+    <label class="field-label">Duration in minutes</label>
+    <input type="number" id="timerMinutes" min="1" value="25" autofocus>
+    <div class="timer-presets">
+      <button class="btn btn-ghost" data-timer-preset="5">5m</button>
+      <button class="btn btn-ghost" data-timer-preset="15">15m</button>
+      <button class="btn btn-ghost" data-timer-preset="25">25m</button>
+      <button class="btn btn-ghost" data-timer-preset="45">45m</button>
+      <button class="btn btn-ghost" data-timer-preset="60">60m</button>
+    </div>
+    ${runningNote}
+    <button class="btn btn-primary" id="startTimerBtn">Start Timer</button>
+    ${backBtn("home","Cancel")}
+  `;
+  return shell("STUDY TIMER", "", body, {path:"~/study/timer"});
+}
+
+function pageTimerActive(){
+  const remaining = timerRemaining();
+  const pct = TIMER.totalSeconds>0 ? ((TIMER.totalSeconds-remaining)/TIMER.totalSeconds)*100 : 0;
+  const done = TIMER.alarming;
+  const paused = TIMER.paused;
+
+  let controls;
+  if(done){
+    controls = `<button class="btn btn-primary" id="stopTimerBtn">Stop chime</button>`;
+  }else{
+    controls = `
+      <button class="btn ${paused?'btn-primary':'btn-ghost'}" id="pauseTimerBtn">${paused ? '▶ Resume' : '⏸ Pause'}</button>
+      <div class="btn-row">
+        <button class="btn btn-ghost" id="hideTimerBtn">👁 Hide timer</button>
+        <button class="btn btn-danger" id="stopTimerBtn">Stop timer</button>
+      </div>
+    `;
+  }
+
+  const statusMsg = done
+    ? "🎉 Time's up! Tap stop to silence the chime."
+    : (paused ? "⏸ Paused — the countdown is frozen."
+              : "This timer keeps running even if you leave this screen.");
+
+  const body = `
+    <div class="timer-display" style="${paused ? 'color:var(--amber);' : ''}">${fmtMMSS(remaining)}</div>
+    <div class="bar-track" style="height:10px;"><div class="bar-fill ${done?'green':(paused?'amber':'cyan')}" style="width:${pct}%;"></div></div>
+    <div class="page-sub" style="margin-top:14px;">${statusMsg}</div>
+    ${controls}
+    ${backBtn("home","Back to menu (timer keeps running)")}
+  `;
+  return shell(done ? "TIME'S UP!" : (paused ? "TIMER PAUSED" : "TIMER ACTIVE"), "", body, {path:"~/study/timer/active"});
+}
+
+function pageProgress(){
+  const sessions = DATA.study_sessions;
+  if(sessions.length===0){
+    return shell("STUDY PROGRESS","", emptyState("📭","No sessions yet.","Start studying to see stats here!") + backBtn("home","Back to menu"), {path:"~/study/progress"});
+  }
+  const totalSessions = sessions.length;
+  const totalCardsStudied = sessions.reduce((s,x)=>s+x.cards_studied,0);
+  const totalCorrect = sessions.reduce((s,x)=>s+(x.correct_answers||0),0);
+  const avgScore = sessions.reduce((s,x)=>s+x.score,0)/totalSessions;
+
+  const bySubject = {};
+  sessions.forEach(s=>{
+    if(!bySubject[s.subject]) bySubject[s.subject] = {count:0, totalScore:0};
+    bySubject[s.subject].count++;
+    bySubject[s.subject].totalScore += s.score;
+  });
+  const subjRows = Object.keys(bySubject).map(subj=>{
+    const st = bySubject[subj];
+    const avg = st.totalScore/st.count;
+    const col = avg>=80?"var(--green)":avg>=60?"var(--amber)":"var(--red)";
+    return `<div class="session-row"><span class="sr-subj">${esc(subj)}</span><span class="sr-cards">${st.count} session${st.count>1?'s':''}</span><span class="sr-score" style="color:${col};">${avg.toFixed(0)}%</span></div>`;
+  }).join("");
+
+  const last5 = sessions.slice(-5).reverse();
+  const rows = last5.map(s=>{
+    const col = s.score>=80?"var(--green)":s.score>=60?"var(--amber)":"var(--red)";
+    return `<div class="session-row">
+      <span class="sr-date">${fmtDate(s.date)}</span>
+      <span class="sr-subj">${esc(s.subject)}${s.type==='quiz'?' 🎯':''}</span>
+      <span class="sr-score" style="color:${col};">${s.score.toFixed(0)}%</span>
+      <span class="sr-cards">${s.cards_studied} cards</span>
+    </div>`;
+  }).join("");
+
+  const body = `
+    <div class="stat-grid">
+      <div class="stat-box"><div class="stat-val">${totalSessions}</div><div class="stat-label">Sessions completed</div></div>
+      <div class="stat-box"><div class="stat-val">${totalCardsStudied}</div><div class="stat-label">Cards studied</div></div>
+      <div class="stat-box"><div class="stat-val">${totalCorrect}</div><div class="stat-label">Correct answers</div></div>
+      <div class="stat-box"><div class="stat-val">${avgScore.toFixed(1)}%</div><div class="stat-label">Average score</div></div>
+    </div>
+    <hr class="div">
+    <div class="qa-label" style="color:var(--amber); margin-bottom:10px;">📚 By subject</div>
+    ${subjRows}
+    <hr class="div">
+    <div class="qa-label" style="color:var(--amber); margin-bottom:10px;">🕐 Last 5 sessions</div>
+    ${rows}
+    ${backBtn("home", "Back to menu")}
+  `;
+  return shell("STUDY PROGRESS (ALL)", "", body, {path:"~/study/progress"});
+}
+
+function pageSubjectProgress(){
+  const subject = nav.params.subject;
+  const sessions = DATA.study_sessions.filter(s=>s.subject===subject);
+  if(sessions.length===0){
+    return shell("PROGRESS", subject, emptyState("📭","No sessions yet.","Study or quiz this subject to see stats here!") + backBtn("subject_menu","Back to Subject Menu"), {path:`~/study/${slug(subject)}/progress`});
+  }
+  const totalSessions = sessions.length;
+  const totalCardsStudied = sessions.reduce((s,x)=>s+x.cards_studied,0);
+  const totalCorrect = sessions.reduce((s,x)=>s+(x.correct_answers||0),0);
+  const avgScore = sessions.reduce((s,x)=>s+x.score,0)/totalSessions;
+  const last5 = sessions.slice(-5).reverse();
+  const rows = last5.map(s=>{
+    const col = s.score>=80?"var(--green)":s.score>=60?"var(--amber)":"var(--red)";
+    return `<div class="session-row">
+      <span class="sr-date">${fmtDate(s.date)}</span>
+      <span class="sr-subj">${s.type==='quiz'?'Quiz':'Study'}</span>
+      <span class="sr-score" style="color:${col};">${s.score.toFixed(0)}%</span>
+      <span class="sr-cards">${s.cards_studied} cards</span>
+    </div>`;
+  }).join("");
+  const body = `
+    <div class="stat-grid">
+      <div class="stat-box"><div class="stat-val">${totalSessions}</div><div class="stat-label">Sessions</div></div>
+      <div class="stat-box"><div class="stat-val">${totalCardsStudied}</div><div class="stat-label">Cards studied</div></div>
+      <div class="stat-box"><div class="stat-val">${totalCorrect}</div><div class="stat-label">Correct answers</div></div>
+      <div class="stat-box"><div class="stat-val">${avgScore.toFixed(1)}%</div><div class="stat-label">Average score</div></div>
+    </div>
+    <hr class="div">
+    <div class="qa-label" style="color:var(--amber); margin-bottom:10px;">🕐 Recent sessions</div>
+    ${rows}
+    ${backBtn("subject_menu", "Back to Subject Menu")}
+  `;
+  return shell("PROGRESS", subject, body, {path:`~/study/${slug(subject)}/progress`});
+}
+
+function pageSyncData(){
+  const subs = subjects();
+  const subjOptions = subs.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("");
+  const body = `
+    <div class="card">
+      <div class="qa-label" style="color:var(--cyan);">📤 Full Export</div>
+      <div class="qa-text" style="font-size:13.5px; margin-bottom:12px;">Everything — every subject, flashcard, note, and your full session history.</div>
+      <button class="btn btn-primary" id="exportFullBtn">Download full backup</button>
+    </div>
+    <div class="card">
+      <div class="qa-label" style="color:var(--cyan);">📤 Export (No Saved Data)</div>
+      <div class="qa-text" style="font-size:13.5px; margin-bottom:12px;">All subjects, flashcards, and notes, but no review history or session stats — good for sharing a clean set.</div>
+      <button class="btn btn-primary" id="exportNoDataBtn">Download clean export</button>
+    </div>
+    <div class="card">
+      <div class="qa-label" style="color:var(--cyan);">📤 Export One Subject</div>
+      ${subs.length===0 ? `<div class="qa-text" style="font-size:13.5px;">No subjects yet.</div>` : `
+      <label class="field-label">Subject</label>
+      <select class="subj-select" id="exportSubjectSelect">${subjOptions}</select>
+      <label class="check-row"><input type="checkbox" id="exportSubjectIncludeData" checked> Include review history &amp; session data</label>
+      <button class="btn btn-primary" id="exportSubjectBtn">Download subject export</button>
+      `}
+    </div>
+    <div class="card">
+      <div class="qa-label" style="color:var(--green);">📥 Import</div>
+      <div class="qa-text" style="font-size:13.5px; margin-bottom:12px;">Load any backup file (full, no-data, or single-subject). This only adds what's missing — anything already here stays exactly as it is.</div>
+      <input type="file" id="importFileInput" accept="application/json,.json" style="display:none;">
+      <button class="btn btn-primary" id="importDataBtn" style="background:var(--green); border-color:var(--green);">Choose backup file</button>
+    </div>
+    <div id="importPreview"></div>
+    ${backBtn("home", "Back to menu")}
+  `;
+  return shell("IMPORT / EXPORT", "", body, {path:"~/study/sync"});
+}
+
+function pageSettings(){
+  const wmStatus = WM_ENABLED ? "on" : "off";
+  const mobileNote = WM_ENABLED && window.innerWidth < 700
+    ? `<div class="page-sub" style="margin-top:10px; color:var(--grey-dim);">Windowed mode is PC-only — it won't activate on small screens.</div>`
+    : "";
+  const body = `
+    <div class="wm-toggle">
+      <div>
+        <div style="font-weight:600;">Windowed mode</div>
+        <div style="font-size:11px; color:var(--grey); margin-top:2px;">PC only · ${wmStatus}</div>
+      </div>
+      <div class="switch ${WM_ENABLED?'on':''}" id="wmToggleSwitch"></div>
+    </div>
+    ${mobileNote}
+
+    <div class="card" style="margin-top:16px;">
+      <div class="qa-label" style="color:var(--amber);">📄 Example Files</div>
+      <div class="qa-text" style="font-size:13.5px; margin-bottom:12px;">Don’t want to write your own note or flashcard, you can download an example export to make your notes using AI.</div>
+      <div class="btn-row" style="margin-top:0;">
+        <button class="btn btn-ghost" id="exampleNotesBtn">📝 Notes export example</button>
+        <button class="btn btn-ghost" id="exampleBackupBtn">🗂 flashcard export example</button>
+      </div>
+    </div>
+
+    <div class="menu" style="margin-top:8px;">
+      <button class="menu-item danger" id="wipeDataBtn">
+        <span class="icon">🗑️</span><span class="label">Delete All Saved Data</span>
+        <span class="meta">permanent</span>
+      </button>
+      <button class="menu-item" data-go="home" data-clearstack="1">
+        <span class="icon">↩️</span><span class="label">Back to Main Menu</span>
+      </button>
+    </div>
+    <div class="page-sub" style="margin-top:16px;">No AI Was Used In The Making Of This Site</div>
+<div class="page-sub" style="margin-top:2px; color:var(--grey-dim); font-size:10.5px;">V4.7.6</div>
+  `;
+  return shell("SETTINGS", "", body, {path:"~/study/settings"});
+}
+
+/* ============================================================
+   SHARED FRAGMENTS
+   ============================================================ */
+function emptyState(icon, title, sub){
+  return `<div class="empty-state"><div class="big">${icon}</div><div>${esc(title)}</div><div>${esc(sub)}</div></div>`;
+}
+function backBtn(target, label){
+  return `<div class="btn-row"><button class="btn btn-ghost" data-go="${target}" data-clearstack="1">${esc(label)}</button></div>`;
+}
+function scoreBlock(correct, total, pct){
+  let color, msg;
+  if(pct>=80){ color="green"; msg="🌟 Excellent work!"; }
+  else if(pct>=60){ color="amber"; msg="👍 Good job!"; }
+  else { color="red"; msg="💪 Keep practicing!"; }
+  const colorVar = `var(--${color})`;
+  return `
+    <div class="card" style="text-align:center;">
+      <div style="font-size:24px; font-weight:700; color:${colorVar};">${correct}/${total} (${pct.toFixed(1)}%)</div>
+      <div class="bar-track" style="margin-top:12px; margin-bottom:0;"><div class="bar-fill ${color}" style="width:${pct}%;"></div></div>
+      <div style="margin-top:14px; font-weight:700; color:${colorVar};">${msg}</div>
+    </div>
+  `;
+}
+
+/* ============================================================
+   FLOAT BAR
+   ============================================================ */
+function renderFloatBar(){
+  const bar = document.getElementById('floatBar');
+  const app = document.getElementById('app');
+  if(!bar) return;
+  let pills = "";
+  let count = 0;
+
+  if(TIMER.active && !TIMER.hidden){
+    count++;
+    if(TIMER.alarming){
+      pills += `<div class="float-pill alarm" id="fpTimer"><span>⏰ Time's up!</span><button class="fp-stop" id="fpTimerStop">Stop</button></div>`;
+    }else if(TIMER.paused){
+      pills += `<div class="float-pill" id="fpTimer"><span>⏸ ${fmtMMSS(timerRemaining())} — paused</span><button class="fp-mini" id="fpTimerHide">Hide</button></div>`;
+    }else{
+      pills += `<div class="float-pill" id="fpTimer"><span>⏰ ${fmtMMSS(timerRemaining())} left</span><button class="fp-mini" id="fpTimerHide">Hide</button></div>`;
+    }
+  }
+  if(ttsState==='playing' || ttsState==='paused'){
+    count++;
+    pills += `<div class="float-pill" id="fpTts"><span>🔊 ${ttsState==='paused'?'Paused':'Reading'}: ${esc(ttsNoteTitle||'')}</span><button class="fp-stop" id="fpTtsStop">Stop</button></div>`;
+  }
+  if(TIMER.active && TIMER.hidden){
+    pills += `<button class="restore-badge${TIMER.alarming?' alarm':''}" id="fpTimerRestore">⏰ ${TIMER.alarming ? "Time's up!" : fmtMMSS(timerRemaining())}</button>`;
+  }
+  bar.innerHTML = pills;
+  if(app && !windowedActive()) app.style.marginTop = count>0 ? `${count*46}px` : "0px";
+  else if(app) app.style.marginTop = "0px";
+
+  const fpTimer = document.getElementById('fpTimer');
+  if(fpTimer) fpTimer.addEventListener('click', (e)=>{
+    if(e.target && (e.target.id==='fpTimerStop' || e.target.id==='fpTimerHide')) return;
+    if(windowedActive()){
+      const existing = WM.windows.find(w => w.page === 'timer_active');
+      if(existing){ existing.z = ++WM.zCounter; WM.focusedId = existing.id; saveWM(); render(); return; }
+      const cur = wmWindowById(CURRENT_WIN_ID);
+      if(cur){ wmOpen('timer_active', {}, cur.id); render(); return; }
+    } else if(nav.page !== 'timer_active') goto('timer_active', {});
+  });
+  const fpTimerStop = document.getElementById('fpTimerStop');
+  if(fpTimerStop) fpTimerStop.addEventListener('click', (e)=>{ e.stopPropagation(); stopTimer(); render(); });
+  const fpTimerHide = document.getElementById('fpTimerHide');
+  if(fpTimerHide) fpTimerHide.addEventListener('click', (e)=>{ e.stopPropagation(); hideTimerBar(); render(); });
+  const fpTimerRestore = document.getElementById('fpTimerRestore');
+  if(fpTimerRestore) fpTimerRestore.addEventListener('click', (e)=>{ e.stopPropagation(); showTimerBar(); });
+  const fpTtsStop = document.getElementById('fpTtsStop');
+  if(fpTtsStop) fpTtsStop.addEventListener('click', (e)=>{ e.stopPropagation(); ttsStop(); render(); });
+}
+
+/* ============================================================
+   WINDOW DRAG & FOCUS
+   ============================================================ */
+function attachWindowHandlers(){
+  document.querySelectorAll('.wm-window').forEach(el=>{
+    el.addEventListener('mousedown', ()=>{
+      const id = el.dataset.windowId;
+      if(WM.focusedId !== id){
+        WM.focusedId = id;
+        const w = wmWindowById(id);
+        if(w) w.z = ++WM.zCounter;
+        saveWM();
+        document.querySelectorAll('.wm-window').forEach(x => x.classList.toggle('focused', x.dataset.windowId === id));
+        el.style.zIndex = w ? w.z : 10;
+      }
+    });
+  });
+
+  document.querySelectorAll('.wm-window .titlebar').forEach(tb=>{
+    tb.addEventListener('mousedown', (e)=>{
+      if(e.target.closest('.dot') || e.target.closest('.titlebar-back')) return;
+      const winEl = tb.closest('.wm-window');
+      if(!winEl) return;
+      const win = wmWindowById(winEl.dataset.windowId);
+      if(!win) return;
+      dragState = { winId: win.id, el: winEl, startX: e.clientX, startY: e.clientY, origX: win.x, origY: win.y };
+      WM.focusedId = win.id;
+      win.z = ++WM.zCounter;
+      winEl.style.zIndex = win.z;
+      document.querySelectorAll('.wm-window').forEach(x => x.classList.toggle('focused', x.dataset.windowId === win.id));
+      e.preventDefault();
+    });
+  });
+
+  const homePill = document.getElementById('wmHomePill');
+  if(homePill) homePill.addEventListener('click', ()=>{
+    const home = WM.windows.find(w => w.isHome);
+    if(home){ WM.focusedId = home.id; home.z = ++WM.zCounter; saveWM(); render(); }
+  });
+}
+
+document.addEventListener('mousemove', (e)=>{
+  if(!dragState) return;
+  const dx = e.clientX - dragState.startX;
+  const dy = e.clientY - dragState.startY;
+  const win = wmWindowById(dragState.winId);
+  if(!win) return;
+  win.x = Math.max(0, Math.min(window.innerWidth - 200, dragState.origX + dx));
+  win.y = Math.max(0, Math.min(window.innerHeight - 60, dragState.origY + dy));
+  dragState.el.style.left = win.x + 'px';
+  dragState.el.style.top = win.y + 'px';
+  drawLines();
+});
+document.addEventListener('mouseup', ()=>{
+  if(dragState){ saveWM(); dragState = null; }
+});
+
+/* ============================================================
+   SECRET DOTS
+   ============================================================ */
+function setupSecretDots(container, winId, isHome){
+  const dots = container.querySelectorAll('[data-dot]');
+  if(!dots.length) return;
+  if(!seqState[winId]) seqState[winId] = { started:false, blues:new Set(), complete:false, resetTimer:null };
+  const st = seqState[winId];
+
+  const paint = ()=>{
+    dots.forEach(d => {
+      const idx = parseInt(d.dataset.dot, 10);
+      d.classList.toggle('blue', st.blues.has(idx));
+    });
+  };
+  const reset = ()=>{
+    st.started = false; st.blues.clear(); st.complete = false;
+    clearTimeout(st.resetTimer);
+    paint();
+  };
+  const scheduleReset = ()=>{
+    clearTimeout(st.resetTimer);
+    st.resetTimer = setTimeout(reset, st.complete ? 3000 : 1700);
+  };
+
+  paint();
+
+  dots.forEach(dot=>{
+    dot.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      const idx = parseInt(dot.dataset.dot, 10);
+
+      if(st.complete){
+        reset();
+        if(windowedActive()){
+          const cur = wmWindowById(winId);
+          if(cur){ wmOpen('settings', {}, cur.id); render(); return; }
+        }
+        navStack = [];
+        goto('settings', {}, false);
+        return;
+      }
+
+      if(!st.started){
+        if(isHome){
+          if(idx === 1){ wmCloseAllExceptHome(); return; }
+          if(idx === 0 || idx === 2){ st.started = true; }
+        } else {
+          if(idx === 2){ st.started = true; }
+          else if(idx === 0){ wmClose(winId); return; }
+          else if(idx === 1){ wmCloseAllExceptHome(); return; }
+        }
+      }
+
+      if(st.started){
+        st.blues.add(idx);
+        paint();
+        if(st.blues.size === 3) st.complete = true;
+        scheduleReset();
+      }
+    });
+  });
+}
+
+/* ============================================================
+   EVENT WIRING
+   ============================================================ */
+function attachHandlers(){
+  const app = document.getElementById("app");
+
+  if(windowedActive()){
+    document.querySelectorAll('.wm-window').forEach(el=>{
+      const win = wmWindowById(el.dataset.windowId);
+      if(!win) return;
+      setupSecretDots(el, win.id, win.isHome);
+    });
+  } else {
+    setupSecretDots(app, 'single', nav.page === 'home');
+  }
+
+  app.querySelectorAll("[data-go]").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      let params = {};
+      if(el.dataset.subject) params.subject = el.dataset.subject;
+      if(el.dataset.noteId) params.noteId = el.dataset.noteId;
+
+      if(windowedActive()){
+        wmHandleGo(el.dataset.go, params, el);
+        return;
+      }
+      if(el.dataset.clearstack) navStack = [];
+      goto(el.dataset.go, params);
+    });
+  });
+
+  app.querySelectorAll("[data-back]").forEach(el=>{
+    el.addEventListener("click", back);
+  });
+  const titlebarBack = app.querySelector("[data-titlebar-back]");
+  if(titlebarBack) titlebarBack.addEventListener("click", back);
+
+  const newSubjectGo = document.getElementById("newSubjectGo");
+  if(newSubjectGo) newSubjectGo.addEventListener("click", ()=>{
+    const name = document.getElementById("newSubjectName").value.trim();
+    if(!name){ toast("Subject name can't be empty"); return; }
+    ensureSubject(name);
+    saveData(DATA);
+    if(windowedActive()){ wmReplace('subject_menu', {subject:name}); return; }
+    goto("subject_menu", {subject:name}, false);
+  });
+
+  const addCardBtn = document.getElementById("addCardGo");
+  if(addCardBtn) addCardBtn.addEventListener("click", ()=>{
+    const subject = nav.params.subject;
+    const q = document.getElementById("cardQuestion").value.trim();
+    const a = document.getElementById("cardAnswer").value.trim();
+    if(!q){ toast("Question can't be empty"); return; }
+    if(!a){ toast("Answer can't be empty"); return; }
+    if(!DATA.flashcards[subject]) DATA.flashcards[subject] = [];
+    DATA.flashcards[subject].push({ question:q, answer:a, review_count:0, last_reviewed:null, created:new Date().toISOString() });
+    saveData(DATA);
+    toast("✅ Flashcard added");
+    document.getElementById("cardQuestion").value = "";
+    document.getElementById("cardAnswer").value = "";
+    document.getElementById("cardQuestion").focus();
+  });
+
+  const delEntire = document.getElementById("delEntireSubject");
+  if(delEntire) delEntire.addEventListener("click", ()=>{
+    const subject = nav.params.subject;
+    const n = cardCount(subject), nn = notesCount(subject);
+    if(confirm(`Delete '${subject}' entirely, including ${n} card(s) and ${nn} note(s)? This can't be undone.`)){
+      delete DATA.flashcards[subject];
+      delete DATA.notes[subject];
+      saveData(DATA);
+      toast(`'${subject}' deleted`);
+      if(windowedActive()){ wmGoBackTo('select_subject', {}); return; }
+      navStack = [];
+      goto("select_subject", {}, false);
+    }
+  });
+
+  app.querySelectorAll("[data-del-card-idx]").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      const subject = nav.params.subject;
+      const idx = parseInt(el.dataset.delCardIdx,10);
+      const card = DATA.flashcards[subject][idx];
+      if(confirm(`Delete "${card.question}"?`)){
+        DATA.flashcards[subject].splice(idx,1);
+        saveData(DATA);
+        toast("Card deleted");
+        if(windowedActive()){ wmReplace('flashcard_menu', {subject}); return; }
+        navStack = [];
+        goto("flashcard_menu", {subject}, false);
+      }
+    });
+  });
+
+  app.querySelectorAll("[data-pick-edit-card]").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      const subject = nav.params.subject;
+      const cardIdx = parseInt(el.dataset.pickEditCard,10);
+      if(windowedActive()){ wmOpen("edit_card_form", {subject, cardIdx}, CURRENT_WIN_ID); render(); return; }
+      goto("edit_card_form", {subject, cardIdx});
+    });
+  });
+  const saveEditBtn = document.getElementById("saveEditBtn");
+  if(saveEditBtn) saveEditBtn.addEventListener("click", ()=>{
+    const { subject, cardIdx } = nav.params;
+    const q = document.getElementById("editQuestion").value.trim();
+    const a = document.getElementById("editAnswer").value.trim();
+    if(!q){ toast("Question can't be empty"); return; }
+    if(!a){ toast("Answer can't be empty"); return; }
+    const card = DATA.flashcards[subject][cardIdx];
+    if(card){ card.question = q; card.answer = a; }
+    saveData(DATA);
+    toast("✅ Changes saved");
+    if(windowedActive()){ wmGoBackTo('manage_card_list', {subject}); return; }
+    navStack = [];
+    goto("manage_card_list", {subject}, false);
+  });
+
+  app.querySelectorAll("[data-study-subject]").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      const subject = el.dataset.studySubject;
+      const cards = DATA.flashcards[subject];
+      if(!cards || cards.length===0){ toast("No cards in this subject yet"); return; }
+      const order = cards.map((_,i)=>i);
+      shuffle(order);
+      const params = {subject, order, idx:0, correct:0, revealed:false};
+      if(windowedActive()){
+        if(el.dataset.clearstack){ wmReplace('study_session', params); return; }
+        wmOpen('study_session', params, CURRENT_WIN_ID); render(); return;
+      }
+      goto("study_session", params);
+    });
+  });
+  const revealBtn = document.getElementById("revealBtn");
+  if(revealBtn) revealBtn.addEventListener("click", ()=>{
+    if(windowedActive()){
+      const w = wmWindowById(CURRENT_WIN_ID);
+      if(w){ w.params.revealed = true; saveWM(); render(); return; }
+    }
+    nav.params.revealed = true;
+    render();
+  });
+  app.querySelectorAll("[data-study-answer]").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      let params = nav.params;
+      let win = null;
+      if(windowedActive()){
+        win = wmWindowById(CURRENT_WIN_ID);
+        if(win) params = win.params;
+      }
+      const {subject, order, idx} = params;
+      let correct = params.correct;
+      const cardIdx = order[idx];
+      const card = DATA.flashcards[subject][cardIdx];
+      if(el.dataset.studyAnswer==="y"){
+        correct++;
+        card.review_count = (card.review_count||0)+1;
+        card.last_reviewed = new Date().toISOString();
+        saveData(DATA);
+      }
+      const nextIdx = idx+1;
+      if(nextIdx >= order.length){
+        const total = order.length;
+        DATA.study_sessions.push({
+          subject, date:new Date().toISOString(),
+          score:(correct/total)*100, cards_studied:total, correct_answers:correct, type:'study'
+        });
+        saveData(DATA);
+        const compParams = {subject, correct, total};
+        if(windowedActive() && win){ win.page = 'study_complete'; win.params = compParams; saveWM(); render(); return; }
+        navStack = [];
+        goto("study_complete", compParams, false);
+      }else{
+        const newParams = {subject, order, idx:nextIdx, correct, revealed:false};
+        if(windowedActive() && win){ win.params = newParams; saveWM(); render(); return; }
+        nav.params = newParams;
+        render();
+      }
+    });
+  });
+
+  const saveNoteBtn = document.getElementById("saveNoteBtn");
+  if(saveNoteBtn) saveNoteBtn.addEventListener("click", ()=>{
+    const subject = nav.params.subject;
+    const noteId = nav.params.noteId;
+    const title = document.getElementById("noteTitle").value.trim();
+    const content = document.getElementById("noteContent").value.trim();
+    if(!title){ toast("Title can't be empty"); return; }
+    if(!content){ toast("Notes can't be empty"); return; }
+    ensureSubject(subject);
+    if(noteId){
+      const note = getNote(subject, noteId);
+      if(note){ note.title = title; note.content = content; }
+    }else{
+      DATA.notes[subject].push({id:genId('note'), title, content, created:new Date().toISOString()});
+    }
+    saveData(DATA);
+    toast(noteId?"✅ Changes saved":"✅ Topic saved");
+    if(windowedActive()){ wmGoBackTo('read_menu', {subject}); return; }
+    navStack = [];
+    goto("read_menu", {subject}, false);
+  });
+
+  app.querySelectorAll("[data-edit-note]").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      const subject = nav.params.subject;
+      const noteId = el.dataset.editNote;
+      if(windowedActive()){ wmOpen("read_write_form", {subject, noteId}, CURRENT_WIN_ID); render(); return; }
+      goto("read_write_form", {subject, noteId});
+    });
+  });
+  app.querySelectorAll("[data-del-note]").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      const subject = nav.params.subject;
+      const id = el.dataset.delNote;
+      const note = getNote(subject, id);
+      if(!note) return;
+      if(confirm(`Delete topic "${note.title}"?`)){
+        if(ttsNoteId===id) ttsStop();
+        DATA.notes[subject] = DATA.notes[subject].filter(n=>n.id!==id);
+        saveData(DATA);
+        toast("Topic deleted");
+        render();
+      }
+    });
+  });
+
+  const ttsPlayBtn = document.getElementById("ttsPlayBtn");
+  if(ttsPlayBtn) ttsPlayBtn.addEventListener("click", ()=>{
+    const subject = nav.params.subject;
+    const noteId = nav.params.noteId;
+    if(ttsState==='playing' && ttsNoteId===noteId){ ttsPauseResume(); }
+    else if(ttsState==='paused' && ttsNoteId===noteId){ ttsPauseResume(); }
+    else{ ttsPlay(subject, noteId); }
+    render();
+  });
+  const ttsStopBtn = document.getElementById("ttsStopBtn");
+  if(ttsStopBtn) ttsStopBtn.addEventListener("click", ()=>{ ttsStop(); render(); });
+  const deleteNoteBtn = document.getElementById("deleteNoteBtn");
+  if(deleteNoteBtn) deleteNoteBtn.addEventListener("click", ()=>{
+    const subject = nav.params.subject;
+    const noteId = nav.params.noteId;
+    const note = getNote(subject, noteId);
+    if(!note) return;
+    if(confirm(`Delete topic "${note.title}"?`)){
+      if(ttsNoteId===noteId) ttsStop();
+      DATA.notes[subject] = DATA.notes[subject].filter(n=>n.id!==noteId);
+      saveData(DATA);
+      toast("Topic deleted");
+      if(windowedActive()){ wmGoBackTo('read_menu', {subject}); return; }
+      navStack = [];
+      goto("read_menu", {subject}, false);
+    }
+  });
+
+  const noteImportBtn = document.getElementById("noteImportBtn");
+  const noteImportInput = document.getElementById("noteImportInput");
+  if(noteImportBtn && noteImportInput){
+    noteImportBtn.addEventListener("click", ()=> noteImportInput.click());
+    noteImportInput.addEventListener("change", (e)=>{
+      const file = e.target.files[0];
+      if(!file) return;
+      parseImportedNotesFile(file, (notesToAdd, err)=>{
+        const preview = document.getElementById("noteImportPreview");
+        if(err){
+          preview.innerHTML = `<div class="card" style="border-color:#5a2424;"><div class="qa-label" style="color:var(--red);">⚠️ ${esc(err)}</div></div>`;
+          return;
+        }
+        const subject = nav.params.subject;
+        ensureSubject(subject);
+        let added = 0;
+        notesToAdd.forEach(n=>{
+          if(!n || (!n.title && !n.content)) return;
+          DATA.notes[subject].push({id:genId('note'), title:n.title||"Untitled", content:n.content||"", created:new Date().toISOString()});
+          added++;
+        });
+        saveData(DATA);
+        preview.innerHTML = `<div class="card" style="border-color:#1f4d3a;"><div class="qa-label" style="color:var(--green);">✅ Imported</div><div class="qa-text" style="font-size:13.5px;">${added} topic${added===1?'':'s'} added.</div></div>`;
+        toast("✅ Topic imported");
+        noteImportInput.value = "";
+      });
+    });
+  }
+
+  const exNotes = document.getElementById("exampleNotesBtn");
+  if(exNotes) exNotes.addEventListener("click", ()=>{ downloadExampleNotes(); toast("⬇️ Example notes downloaded"); });
+  const exBackup = document.getElementById("exampleBackupBtn");
+  if(exBackup) exBackup.addEventListener("click", ()=>{ downloadExampleBackup(); toast("⬇️ Example backup downloaded"); });
+
+  const quizModeSel = document.getElementById("quizTimerMode");
+  if(quizModeSel){
+    const optsBox = document.getElementById("quizTimerOpts");
+    const syncOpts = ()=>{ optsBox.innerHTML = quizTimerOptsHTML(quizModeSel.value); };
+    quizModeSel.addEventListener("change", syncOpts);
+    syncOpts();
+  }
+
+  const startQuizBtn = document.getElementById("startQuizBtn");
+  if(startQuizBtn) startQuizBtn.addEventListener("click", ()=>{
+    const subject = nav.params.subject;
+    const maxQ = Math.min(10, cardCount(subject));
+    let n = parseInt(document.getElementById("numQuestions").value, 10);
+    if(isNaN(n)) n = maxQ;
+    n = Math.min(Math.max(1,n), maxQ);
+    const mode = quizModeSel ? quizModeSel.value : 'none';
+    const pool = [...DATA.flashcards[subject]];
+    shuffle(pool);
+    const order = pool.slice(0,n);
+    const params = {subject, order, idx:0, score:0, userAnswer:"", checked:false, result:null, timerMode: mode};
+    if(mode === 'perq'){
+      let secs = parseInt((document.getElementById("quizPerQSeconds")||{}).value, 10);
+      if(isNaN(secs) || secs < 5) secs = 30;
+      params.perQSeconds = secs;
+      params.qEndsAt = Date.now() + secs*1000;
+    }else if(mode === 'whole'){
+      let mins = parseInt((document.getElementById("quizWholeMinutes")||{}).value, 10);
+      if(isNaN(mins) || mins < 1) mins = 5;
+      params.quizEndsAt = Date.now() + mins*60000;
+    }
+    if(windowedActive()){ wmReplace('quiz_session', params); return; }
+    navStack = [];
+    goto("quiz_session", params, false);
+  });
+  const submitAnswerBtn = document.getElementById("submitAnswerBtn");
+  if(submitAnswerBtn) submitAnswerBtn.addEventListener("click", submitQuizAnswer);
+  const quizInput = document.getElementById("quizAnswerInput");
+  if(quizInput) quizInput.addEventListener("keydown", (e)=>{ if(e.key==="Enter") submitQuizAnswer(); });
+
+  app.querySelectorAll("[data-quiz-override]").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      const override = el.dataset.quizOverride === "y";
+      let params = nav.params;
+      if(windowedActive()){
+        const w = wmWindowById(CURRENT_WIN_ID);
+        if(w) params = w.params;
+      }
+      if(override){
+        params.score += 1;
+        params.result = "correct";
+        toast("Marked as correct");
+        advanceQuiz();
+      }else{
+        params.result = "wrong";
+        render();
+      }
+    });
+  });
+  const nextQBtn = document.getElementById("nextQuestionBtn");
+  if(nextQBtn) nextQBtn.addEventListener("click", advanceQuiz);
+
+  app.querySelectorAll("[data-quiz-subject]").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      const subj = el.dataset.quizSubject;
+      const params = {subject: subj};
+      if(windowedActive()){
+        if(el.dataset.clearstack){ wmReplace('quiz_settings', params); return; }
+        wmOpen('quiz_settings', params, CURRENT_WIN_ID); render(); return;
+      }
+      goto("quiz_settings", params);
+    });
+  });
+
+  app.querySelectorAll("[data-timer-preset]").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      document.getElementById("timerMinutes").value = el.dataset.timerPreset;
+    });
+  });
+  const startTimerBtn = document.getElementById("startTimerBtn");
+  if(startTimerBtn) startTimerBtn.addEventListener("click", ()=>{
+    let mins = parseInt(document.getElementById("timerMinutes").value, 10);
+    if(isNaN(mins) || mins<=0){ toast("Enter a positive number of minutes"); return; }
+    startTimer(mins);
+  });
+  const stopTimerBtn = document.getElementById("stopTimerBtn");
+  if(stopTimerBtn) stopTimerBtn.addEventListener("click", ()=>{
+    stopTimer();
+    if(windowedActive()){ wmGoBackTo('home', {}); return; }
+    navStack = [];
+    goto("home", {}, false);
+  });
+  const pauseTimerBtn = document.getElementById("pauseTimerBtn");
+  if(pauseTimerBtn) pauseTimerBtn.addEventListener("click", ()=>{
+    if(TIMER.paused) resumeTimer(); else pauseTimer();
+    render();
+  });
+  const hideTimerBtn = document.getElementById("hideTimerBtn");
+  if(hideTimerBtn) hideTimerBtn.addEventListener("click", ()=>{
+    hideTimerBar();
+    toast("Timer hidden — tap the ⏰ bubble to bring it back");
+    render();
+  });
+
+  const exportFullBtn = document.getElementById("exportFullBtn");
+  if(exportFullBtn) exportFullBtn.addEventListener("click", ()=>{ exportFull(); toast("⬇️ Full backup downloaded"); });
+  const exportNoDataBtn = document.getElementById("exportNoDataBtn");
+  if(exportNoDataBtn) exportNoDataBtn.addEventListener("click", ()=>{ exportNoData(); toast("⬇️ Clean export downloaded"); });
+  const exportSubjectBtn = document.getElementById("exportSubjectBtn");
+  if(exportSubjectBtn) exportSubjectBtn.addEventListener("click", ()=>{
+    const subject = document.getElementById("exportSubjectSelect").value;
+    const includeData = document.getElementById("exportSubjectIncludeData").checked;
+    exportSubject(subject, includeData);
+    toast("⬇️ Subject export downloaded");
+  });
+  const importBtn = document.getElementById("importDataBtn");
+  const importFileInput = document.getElementById("importFileInput");
+  if(importBtn && importFileInput){
+    importBtn.addEventListener("click", ()=> importFileInput.click());
+    importFileInput.addEventListener("change", (e)=>{
+      const file = e.target.files[0];
+      if(!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev)=>{
+        let parsed;
+        try{ parsed = JSON.parse(ev.target.result); }
+        catch(err){
+          document.getElementById("importPreview").innerHTML =
+            `<div class="card" style="border-color:#5a2424;"><div class="qa-label" style="color:var(--red);">⚠️ Couldn't read that file</div><div class="qa-text" style="font-size:13px;">Make sure you picked a backup .json file exported from this app.</div></div>`;
+          return;
+        }
+        if(!parsed.flashcards && !parsed.study_sessions && !parsed.notes){
+          document.getElementById("importPreview").innerHTML =
+            `<div class="card" style="border-color:#5a2424;"><div class="qa-label" style="color:var(--red);">⚠️ Not a recognized backup file</div></div>`;
+          return;
+        }
+        const stats = mergeImportedData(parsed);
+        let parts = [];
+        if(stats.newSubjects) parts.push(`${stats.newSubjects} new subject${stats.newSubjects>1?'s':''}`);
+        if(stats.newCards) parts.push(`${stats.newCards} new card${stats.newCards>1?'s':''}`);
+        if(stats.newNotes) parts.push(`${stats.newNotes} new note${stats.newNotes>1?'s':''}`);
+        if(stats.newSessions) parts.push(`${stats.newSessions} new session${stats.newSessions>1?'s':''}`);
+        const skipped = stats.skippedCards + stats.skippedSessions + (stats.skippedNotes||0);
+        const summary = parts.length ? parts.join(", ") + " added." : "Nothing new — everything in that file was already here.";
+        document.getElementById("importPreview").innerHTML = `
+          <div class="card" style="border-color:#1f4d3a;">
+            <div class="qa-label" style="color:var(--green);">✅ Import complete</div>
+            <div class="qa-text" style="font-size:13.5px;">${esc(summary)}</div>
+            ${skipped ? `<div class="qa-text" style="font-size:12px; color:var(--grey); margin-top:8px;">${skipped} already existed and were left untouched.</div>` : ""}
+          </div>
+        `;
+        toast("✅ Import complete");
+        importFileInput.value = "";
+      };
+      reader.readAsText(file);
+    });
+  }
+
+  const wmToggle = document.getElementById("wmToggleSwitch");
+  if(wmToggle) wmToggle.addEventListener("click", ()=>{
+    if(!WM_ENABLED && window.innerWidth < 700){
+      toast("Windowed mode is PC-only");
+      return;
+    }
+    WM_ENABLED = !WM_ENABLED;
+    if(WM_ENABLED){
+      if(!WM.windows.find(w => w.isHome)){
+        const hw = { id: genId('win'), page:'home', params:{}, parentId:null, x:30, y:30, z:++WM.zCounter, isHome:true };
+        WM.windows.unshift(hw);
+        WM.focusedId = hw.id;
+      } else {
+        WM.focusedId = WM.windows.find(w => w.isHome).id;
+      }
+    }
+    saveWM();
+    toast(WM_ENABLED ? "Windowed mode ON" : "Windowed mode OFF");
+    render();
+  });
+
+  const wipeBtn = document.getElementById("wipeDataBtn");
+  if(wipeBtn) wipeBtn.addEventListener("click", ()=>{
+    if(!confirm("Delete ALL saved data?\n\nEvery subject, flashcard, note and study session will be erased. This cannot be undone.")) return;
+    if(!confirm("Are you absolutely sure? This is permanent.")) return;
+    try{
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(TIMER_KEY);
+      localStorage.removeItem(WM_STATE_KEY);
+    }catch(e){}
+    DATA = {flashcards:{}, study_sessions:[], notes:{}};
+    saveData(DATA);
+    TIMER = blankTimer(); saveTimer();
+    stopChirping(); ttsStop();
+    WM.windows = [{ id: genId('win'), page:'home', params:{}, parentId:null, x:30, y:30, z:++WM.zCounter, isHome:true }];
+    WM.focusedId = WM.windows[0].id;
+    saveWM();
+    toast("🗑️ All data deleted");
+    navStack = [];
+    goto("home", {}, false);
+  });
+}
+
+function submitQuizAnswer(){
+  const input = document.getElementById("quizAnswerInput");
+  const userAnswer = input ? input.value.trim() : "";
+  let params = nav.params;
+  let win = null;
+  if(windowedActive()){
+    win = wmWindowById(CURRENT_WIN_ID);
+    if(win) params = win.params;
+  }
+  const {order, idx} = params;
+  const card = order[idx];
+  const correctAnswer = card.answer;
+
+  const similarity = answerSimilarity(userAnswer, correctAnswer);
+  let result;
+  if(!userAnswer){ result = "wrong"; }
+  else if(similarity >= 82){ result = "correct"; params.score += 1; }
+  else if(similarity >= 45){ result = "close"; }
+  else { result = "wrong"; }
+
+  params.userAnswer = userAnswer;
+  params.checked = true;
+  params.result = result;
+  if(params.timerMode && params.timerMode !== 'none'){
+    params.frozenRemaining = quizRemaining(params);
+  }
+  if(windowedActive() && win) saveWM();
+  render();
+}
+
+function advanceQuiz(){
+  let params = nav.params;
+  let win = null;
+  if(windowedActive()){
+    win = wmWindowById(CURRENT_WIN_ID);
+    if(win) params = win.params;
+  }
+  const {subject, order, idx, score} = params;
+  const nextIdx = idx+1;
+  if(nextIdx >= order.length){
+    const total = order.length;
+    DATA.study_sessions.push({
+      subject, date:new Date().toISOString(), score:(score/total)*100,
+      cards_studied: total, correct_answers: score, type:'quiz'
+    });
+    saveData(DATA);
+    const comp = {subject, score, total};
+    if(windowedActive() && win){ win.page = 'quiz_complete'; win.params = comp; saveWM(); render(); return; }
+    navStack = [];
+    goto("quiz_complete", comp, false);
+  }else{
+    const next = {subject, order, idx:nextIdx, score, userAnswer:"", checked:false, result:null, timerMode: params.timerMode};
+    if(params.timerMode === 'perq'){
+      next.perQSeconds = params.perQSeconds;
+      next.qEndsAt = Date.now() + (params.perQSeconds||30)*1000;
+    }else if(params.timerMode === 'whole'){
+      next.quizEndsAt = params.quizEndsAt;
+    }
+    if(windowedActive() && win){ win.params = next; saveWM(); render(); return; }
+    nav.params = next;
+    render();
+  }
+}
+
+/* ============================================================
+   INIT
+   ============================================================ */
+loadWM();
+if(TIMER.active){
+  const rem = timerRemaining();
+  if(rem<=0 && !TIMER.paused){ TIMER.alarming = true; TIMER.hidden = false; saveTimer(); startChirping(); }
+}
+render();
+renderFloatBar();
+setInterval(()=>{ tickTimer(); tickQuizTimer(); }, 1000);
+window.addEventListener('resize', ()=>{ render(); });
+</script>
+</body>
+</html>
