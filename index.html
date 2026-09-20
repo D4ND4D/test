@@ -177,7 +177,7 @@ select.subj-select{width:100%;background:var(--bg);border:1px solid var(--border
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs, serverTimestamp, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCe10S1IL7yd7vaT64siUZIDLDE2Yol1g0",
@@ -188,7 +188,6 @@ const firebaseConfig = {
   appId: "1:189507822224:web:b0959b1ceef41481702e15"
 };
 const ADMIN_UID = "EMTxL9cIU4dhRQeOptEaHfrhWty2";
-const APPROVAL_DAYS = 35;
 
 const fbApp = initializeApp(firebaseConfig);
 const auth  = getAuth(fbApp);
@@ -199,6 +198,13 @@ let currentUserDoc = null;
 let pendingUsername = null;
 let expiryCheckInterval = null;
 let APP_READY = false;
+let syncDebounceTimer = null;
+let lastSyncedAt = null;
+let suppressPush = false;
+let localDirty = false;
+let dataUnsubscribe = null;
+let planConfig = { monthlyDays: 30, termDays: 120 };
+let planConfigLoaded = false;
 
 /* ========== STORAGE ========== */
 const EMPTY_DATA = { flashcards:{}, study_sessions:[], notes:{} };
@@ -221,7 +227,7 @@ let dragState = null;
 let chirpInterval = null;
 
 function loadData(){try{const raw=localStorage.getItem(STORAGE_KEY);if(raw){const d=JSON.parse(raw);if(!d.flashcards)d.flashcards={};if(!d.study_sessions)d.study_sessions=[];if(!d.notes)d.notes={};return d}}catch(e){}const s=JSON.parse(JSON.stringify(EMPTY_DATA));saveData(s);return s}
-function saveData(d){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(d))}catch(e){}}
+function saveData(d){   try{localStorage.setItem(STORAGE_KEY,JSON.stringify(d))}catch(e){}   localDirty = true;   if(!suppressPush) scheduleSyncPush(); }
 function blankTimer(){return{active:false,endsAt:0,totalSeconds:0,alarming:false,paused:false,hidden:false,pausedRemaining:0}}
 function loadTimer(){try{const raw=localStorage.getItem(TIMER_KEY);if(raw){const t=JSON.parse(raw);if(typeof t.paused!=='boolean')t.paused=false;if(typeof t.hidden!=='boolean')t.hidden=false;if(typeof t.pausedRemaining!=='number')t.pausedRemaining=0;return t}}catch(e){}return blankTimer()}
 function saveTimer(){try{localStorage.setItem(TIMER_KEY,JSON.stringify(TIMER))}catch(e){}}
@@ -342,12 +348,15 @@ function routeBasedOnStatus(){
   if(exp&&exp<new Date()){showExpiredScreen();return}
   bootApp();
 }
-function bootApp(){
+async function bootApp(){
+  await pullDataFromCloud();
+  if(isAdmin() && !planConfigLoaded) await loadPlanConfig();
   hideAuthGate();
   APP_READY=true;
   render();
   renderFloatBar();
   startExpiryCheck();
+  startDataListener();
 }
 function startExpiryCheck(){
   if(expiryCheckInterval)clearInterval(expiryCheckInterval);
@@ -358,9 +367,131 @@ function startExpiryCheck(){
     if(exp<new Date()){APP_READY=false;showExpiredScreen()}
   },60000);
 }
+  function scheduleSyncPush(){
+  if(!currentUser) return;
+  if(currentUser.uid !== ADMIN_UID){
+    if(!currentUserDoc || !currentUserDoc.approved) return;
+    const exp = currentUserDoc.expiresAt
+      ? (currentUserDoc.expiresAt.toDate ? currentUserDoc.expiresAt.toDate() : new Date(currentUserDoc.expiresAt))
+      : null;
+    if(!exp || exp < new Date()) return;
+  }
+  clearTimeout(syncDebounceTimer);
+  syncDebounceTimer = setTimeout(pushDataToCloud, 1500);
+}
+
+async function pushDataToCloud(){
+  if(!currentUser || !APP_READY) return;
+  try{
+    const ref = doc(db, "study_data", currentUser.uid);
+    await setDoc(ref, {
+      flashcards: DATA.flashcards,
+      notes: DATA.notes,
+      study_sessions: DATA.study_sessions,
+      updatedAt: serverTimestamp()
+    });
+    lastSyncedAt = new Date();
+    localDirty = false;
+    updateSyncIndicator();
+  }catch(e){
+    console.warn("Sync push failed:", e);
+  }
+}
+
+async function pullDataFromCloud(){
+  if(!currentUser) return;
+  try{
+    const ref = doc(db, "study_data", currentUser.uid);
+    const snap = await getDoc(ref);
+    if(snap.exists()){
+      const cloud = snap.data();
+      suppressPush = true;
+      DATA.flashcards = cloud.flashcards || {};
+      DATA.notes = cloud.notes || {};
+      DATA.study_sessions = cloud.study_sessions || [];
+      try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(DATA)); }catch(e){}
+      lastSyncedAt = cloud.updatedAt && cloud.updatedAt.toDate ? cloud.updatedAt.toDate() : new Date();
+      localDirty = false;
+      suppressPush = false;
+    } else {
+      await pushDataToCloud();
+    }
+  }catch(e){
+    console.warn("Sync pull failed (offline?):", e);
+  }
+}
+
+function startDataListener(){
+  if(dataUnsubscribe){ try{ dataUnsubscribe(); }catch(e){} dataUnsubscribe = null; }
+  if(!currentUser) return;
+  const ref = doc(db, "study_data", currentUser.uid);
+  dataUnsubscribe = onSnapshot(ref, (snap) => {
+    if(!snap.exists()) return;
+    if(localDirty) return;
+    const cloud = snap.data();
+    const cloudTime = cloud.updatedAt && cloud.updatedAt.toDate ? cloud.updatedAt.toDate() : null;
+    if(!cloudTime) return;
+    if(lastSyncedAt && cloudTime <= lastSyncedAt) return;
+    suppressPush = true;
+    DATA.flashcards = cloud.flashcards || {};
+    DATA.notes = cloud.notes || {};
+    DATA.study_sessions = cloud.study_sessions || [];
+    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(DATA)); }catch(e){}
+    lastSyncedAt = cloudTime;
+    suppressPush = false;
+    render();
+    toast("🔄 Synced from another device");
+  }, (err) => {
+    console.warn("Snapshot error:", err);
+  });
+}
+
+function stopDataListener(){
+  if(dataUnsubscribe){ try{ dataUnsubscribe(); }catch(e){} dataUnsubscribe = null; }
+}
+
+function updateSyncIndicator(){
+  const el = document.getElementById("syncStatus");
+  if(!el) return;
+  if(!lastSyncedAt){ el.textContent = "Not yet synced"; return; }
+  const secs = Math.floor((Date.now() - lastSyncedAt.getTime()) / 1000);
+  if(secs < 5) el.textContent = "Synced just now";
+  else if(secs < 60) el.textContent = `Synced ${secs}s ago`;
+  else if(secs < 3600) el.textContent = `Synced ${Math.floor(secs/60)}m ago`;
+  else el.textContent = `Synced ${lastSyncedAt.toLocaleTimeString()}`;
+}
+setInterval(updateSyncIndicator, 5000);
+
+async function loadPlanConfig(){
+  try{
+    const ref = doc(db, "config", "plans");
+    const snap = await getDoc(ref);
+    if(snap.exists()){
+      planConfig.monthlyDays = snap.data().monthlyDays || 30;
+      planConfig.termDays = snap.data().termDays || 120;
+    } else {
+      await setDoc(ref, planConfig);
+    }
+  }catch(e){
+    console.warn("Plan config load failed:", e);
+  }
+  planConfigLoaded = true;
+}
+
+async function savePlanConfig(){
+  try{
+    await setDoc(doc(db, "config", "plans"), planConfig);
+    toast("✅ Plan defaults saved");
+  }catch(e){
+    toast("Could not save plan config");
+  }
+}
 async function handleSignOut(){
   if(!confirm("Sign out?"))return;
   try{if(ttsState==="playing"||ttsState==="paused")ttsStop();if(TIMER.active)stopTimer()}catch(e){}
+  if(localDirty) await pushDataToCloud();
+  stopDataListener();
+  clearTimeout(syncDebounceTimer);
   try{await signOut(auth)}catch(e){toast("Sign out failed")}
 }
 
@@ -683,7 +814,7 @@ function shell(titleHTML,subtitle,bodyHTML,opts={}){
         <h1 class="page-title">${titleHTML}<span class="cursor"></span></h1>
         ${subtitle?`<div class="page-sub">${esc(subtitle)}</div>`:""}
         ${bodyHTML}
-        <div class="footer-note">your data stays on this device — nothing is uploaded</div>
+        <div class="footer-note">synced to your account — only you can read it</div>
       </div>
     </div>
   `;
@@ -1235,7 +1366,13 @@ function pageSettings(){
     </div>
   `:"";
   const body=`
-    ${accountBlock}
+       ${accountBlock}
+    <div class="card">
+      <div class="qa-label" style="color:var(--cyan);">☁️ Cloud Sync</div>
+      <div class="auth-info-row"><span>Status</span><span class="val" id="syncStatus">—</span></div>
+      <div class="auth-info-row"><span>Pending</span><span class="val" id="syncPending">—</span></div>
+      <button class="btn btn-primary" id="syncNowBtn" style="margin-top:12px;">🔄 Sync now</button>
+    </div>
     ${adminBlock}
     <div class="wm-toggle">
       <div>
@@ -1283,33 +1420,65 @@ function userStatus(u){
   }
   return"pending";
 }
+function userPlan(u){
+  return u.plan === "term" ? "term" : (u.plan === "monthly" ? "monthly" : null);
+}
+function planLabel(u){
+  const p=userPlan(u);
+  if(p==="term")return "📚 Term";
+  if(p==="monthly")return "📅 Monthly";
+  return "—";
+}
+  return"pending";
+}
 function pageAdminPanel(){
   if(!isAdmin()){
     return shell("ADMIN","",emptyState("🚫","Not authorized.","This area is only for the owner.")+backBtn("home","Back to menu"),{path:"~/study/admin"});
   }
   const users=adminUsersCache;
+
   let body=`
     <div class="page-sub" style="margin-top:-6px;">Approve, revoke, or extend access for students.</div>
+
+    <div class="card">
+      <div class="qa-label" style="color:var(--cyan);">⚙️ Plan Defaults</div>
+      <div class="qa-text" style="font-size:12px;margin-bottom:10px;">Days granted when you approve or extend someone. Change these any time.</div>
+      <label class="field-label">📅 Monthly plan — days</label>
+      <input type="number" id="cfgMonthlyDays" min="1" max="3650" value="${planConfig.monthlyDays}">
+      <label class="field-label">📚 Term plan — days</label>
+      <input type="number" id="cfgTermDays" min="1" max="3650" value="${planConfig.termDays}">
+      <button class="btn btn-primary" id="savePlanCfgBtn">Save defaults</button>
+    </div>
+
     <div class="admin-filter" id="adminFilter">
       <button class="mini-btn ${adminFilterMode==='all'?'active':''}" data-afilter="all">All</button>
-      <button class="mini-btn ${adminFilterMode==='pending'?'active':''}" data-afilter="pending">Pending</button>
-      <button class="mini-btn ${adminFilterMode==='approved'?'active':''}" data-afilter="approved">Active</button>
-      <button class="mini-btn ${adminFilterMode==='expired'?'active':''}" data-afilter="expired">Expired</button>
+      <button class="mini-btn ${adminFilterMode==='pending'?'active':''}" data-afilter="pending">⏳ Pending</button>
+      <button class="mini-btn ${adminFilterMode==='approved'?'active':''}" data-afilter="approved">✓ Active</button>
+      <button class="mini-btn ${adminFilterMode==='expired'?'active':''}" data-afilter="expired">⏰ Expired</button>
+      <button class="mini-btn ${adminFilterMode==='monthly'?'active':''}" data-afilter="monthly">📅 Monthly</button>
+      <button class="mini-btn ${adminFilterMode==='term'?'active':''}" data-afilter="term">📚 Term</button>
     </div>
     <button class="btn btn-ghost" id="adminRefreshBtn" style="margin-bottom:12px;">🔄 Refresh</button>
   `;
+
   if(!users){
     body+=`<div class="spinner" style="margin:20px auto;"></div><div class="auth-loading">Loading users…</div>`;
   }else{
     const filtered=users.filter(u=>{
       if(u.uid===ADMIN_UID)return false;
       if(adminFilterMode==='all')return true;
+      if(adminFilterMode==='monthly')return userPlan(u)==='monthly';
+      if(adminFilterMode==='term')return userPlan(u)==='term';
       return userStatus(u)===adminFilterMode;
     });
     if(filtered.length===0){
       body+=emptyState("📭","No users here.","Try a different filter, or wait for signups.");
     }else{
-      filtered.forEach(u=>{
+      // Split into two groups
+      const pending=filtered.filter(u=>userStatus(u)!=='approved');
+      const active=filtered.filter(u=>userStatus(u)==='approved');
+
+      const renderRow=(u)=>{
         const st=userStatus(u);
         const exp=u.expiresAt?(u.expiresAt.toDate?u.expiresAt.toDate():new Date(u.expiresAt)):null;
         const expStr=exp?exp.toLocaleDateString():"—";
@@ -1317,23 +1486,39 @@ function pageAdminPanel(){
         const createdStr=created?created.toLocaleDateString():"—";
         let actions='';
         if(st==='pending'){
-          actions=`<button class="mini-btn green" data-admin-action="approve" data-uid="${u.uid}">✓ Approve (${APPROVAL_DAYS}d)</button>
-            <button class="mini-btn danger" data-admin-action="delete" data-uid="${u.uid}">🗑 Delete</button>`;
+          actions=`<button class="mini-btn green" data-admin-action="approve" data-plan="monthly" data-uid="${u.uid}">✓ Monthly (${planConfig.monthlyDays}d)</button>
+            <button class="mini-btn green" data-admin-action="approve" data-plan="term" data-uid="${u.uid}">✓ Term (${planConfig.termDays}d)</button>
+            <button class="mini-btn danger" data-admin-action="delete" data-uid="${u.uid}">🗑</button>`;
         }else if(st==='approved'){
-          actions=`<button class="mini-btn amber" data-admin-action="extend" data-uid="${u.uid}">+${APPROVAL_DAYS}d</button>
+          actions=`<button class="mini-btn amber" data-admin-action="extend" data-plan="monthly" data-uid="${u.uid}">+${planConfig.monthlyDays}d 📅</button>
+            <button class="mini-btn amber" data-admin-action="extend" data-plan="term" data-uid="${u.uid}">+${planConfig.termDays}d 📚</button>
             <button class="mini-btn danger" data-admin-action="revoke" data-uid="${u.uid}">✗ Revoke</button>
-            <button class="mini-btn danger" data-admin-action="delete" data-uid="${u.uid}">🗑 Delete</button>`;
+            <button class="mini-btn danger" data-admin-action="delete" data-uid="${u.uid}">🗑</button>`;
         }else{
-          actions=`<button class="mini-btn green" data-admin-action="approve" data-uid="${u.uid}">✓ Reactivate (${APPROVAL_DAYS}d)</button>
-            <button class="mini-btn danger" data-admin-action="delete" data-uid="${u.uid}">🗑 Delete</button>`;
+          actions=`<button class="mini-btn green" data-admin-action="approve" data-plan="monthly" data-uid="${u.uid}">✓ Monthly (${planConfig.monthlyDays}d)</button>
+            <button class="mini-btn green" data-admin-action="approve" data-plan="term" data-uid="${u.uid}">✓ Term (${planConfig.termDays}d)</button>
+            <button class="mini-btn danger" data-admin-action="delete" data-uid="${u.uid}">🗑</button>`;
         }
-        body+=`<div class="admin-user-row">
+        return `<div class="admin-user-row">
           <div class="au-top"><span class="au-name">${esc(u.username||"user")}</span><span class="au-id">${esc(u.displayId||"—")}</span></div>
           <div class="au-email">${esc(u.email||"—")}</div>
-          <span class="au-status ${st}">${st==='approved'?'✓ Active':(st==='pending'?'⏳ Pending':'⏰ Expired')} · exp: ${esc(expStr)} · joined: ${esc(createdStr)}</span>
+          <span class="au-status ${st}">${st==='approved'?'✓ Active':(st==='pending'?'⏳ Pending':'⏰ Expired')} · ${planLabel(u)} · exp: ${esc(expStr)} · joined: ${esc(createdStr)}</span>
           <div class="admin-actions">${actions}</div>
         </div>`;
-      });
+      };
+
+      if(adminFilterMode==='all'){
+        if(pending.length){
+          body+=`<div class="qa-label" style="color:var(--amber);margin:14px 0 8px;">⏳ Pending / Expired (${pending.length})</div>`;
+          pending.forEach(u=>{body+=renderRow(u)});
+        }
+        if(active.length){
+          body+=`<div class="qa-label" style="color:var(--green);margin:18px 0 8px;">✓ Active (${active.length})</div>`;
+          active.forEach(u=>{body+=renderRow(u)});
+        }
+      }else{
+        filtered.forEach(u=>{body+=renderRow(u)});
+      }
     }
   }
   body+=backBtn("home","Back to Main Menu");
@@ -1341,7 +1526,7 @@ function pageAdminPanel(){
   if(!users){setTimeout(loadAdminUsers,50)}
   return html;
 }
-async function loadAdminUsers(){
+  async function loadAdminUsers(){
   try{
     adminUsersCache=await fetchAdminUsers();
     render();
@@ -1351,25 +1536,26 @@ async function loadAdminUsers(){
     render();
     toast("Could not load users");
   }
-}
-async function adminAction(action,uid){
+}async function adminAction(action,uid,plan){
   if(!isAdmin())return;
   try{
     const ref=doc(db,"users",uid);
     if(action==="approve"){
-      const exp=new Date(Date.now()+APPROVAL_DAYS*86400000);
-      await updateDoc(ref,{approved:true,approvedAt:serverTimestamp(),expiresAt:exp});
-      toast(`✅ Approved for ${APPROVAL_DAYS} days`);
+      const days=plan==="term"?planConfig.termDays:planConfig.monthlyDays;
+      const exp=new Date(Date.now()+days*86400000);
+      await updateDoc(ref,{approved:true,approvedAt:serverTimestamp(),expiresAt:exp,plan});
+      toast(`✅ Approved (${plan}, ${days}d)`);
     }else if(action==="extend"){
+      const days=plan==="term"?planConfig.termDays:planConfig.monthlyDays;
       const snap=await getDoc(ref);
       const cur=snap.data().expiresAt;
       const curD=cur?(cur.toDate?cur.toDate():new Date(cur)):new Date();
       const base=curD<new Date()?new Date():curD;
-      const exp=new Date(base.getTime()+APPROVAL_DAYS*86400000);
-      await updateDoc(ref,{approved:true,expiresAt:exp});
-      toast(`✅ Extended ${APPROVAL_DAYS} days`);
+      const exp=new Date(base.getTime()+days*86400000);
+      await updateDoc(ref,{approved:true,expiresAt:exp,plan});
+      toast(`✅ Extended ${days}d (${plan})`);
     }else if(action==="revoke"){
-      await updateDoc(ref,{approved:false,expiresAt:null});
+      await updateDoc(ref,{approved:false,expiresAt:null,plan:null});
       toast("✗ Access revoked");
     }else if(action==="delete"){
       if(!confirm("Permanently delete this user record? Their login still exists but they'll be treated as a new signup next time. Continue?"))return;
@@ -2015,7 +2201,16 @@ function attachHandlers(){
     toast(WM_ENABLED?"Windowed mode ON":"Windowed mode OFF");
     render();
   });
-
+  const syncNowBtn=document.getElementById("syncNowBtn");
+  if(syncNowBtn)syncNowBtn.addEventListener("click",async()=>{
+    toast("Syncing…");
+    await pullDataFromCloud();
+    await pushDataToCloud();
+    render();
+    toast("✅ Synced");
+  });
+  const syncPendingEl=document.getElementById("syncPending");
+  if(syncPendingEl)syncPendingEl.textContent=localDirty?"Changes waiting to upload":"All up to date";
   const signOutBtn=document.getElementById("signOutBtn");
   if(signOutBtn)signOutBtn.addEventListener("click",handleSignOut);
 
@@ -2042,16 +2237,26 @@ function attachHandlers(){
       render();
     });
   });
+    const savePlanCfgBtn=document.getElementById("savePlanCfgBtn");
+  if(savePlanCfgBtn)savePlanCfgBtn.addEventListener("click",async()=>{
+    const m=parseInt(document.getElementById("cfgMonthlyDays").value,10);
+    const t=parseInt(document.getElementById("cfgTermDays").value,10);
+    if(isNaN(m)||m<1||isNaN(t)||t<1){toast("Enter valid day counts");return}
+    planConfig.monthlyDays=m;
+    planConfig.termDays=t;
+    await savePlanConfig();
+    render();
+  });
   const adminRefresh=document.getElementById("adminRefreshBtn");
   if(adminRefresh)adminRefresh.addEventListener("click",()=>{adminUsersCache=null;render()});
-  app.querySelectorAll("[data-admin-action]").forEach(el=>{
+    app.querySelectorAll("[data-admin-action]").forEach(el=>{
     el.addEventListener("click",()=>{
       const action=el.dataset.adminAction;
       const uid=el.dataset.uid;
-      adminAction(action,uid);
+      const plan=el.dataset.plan||null;
+      adminAction(action,uid,plan);
     });
   });
-}
 
 /* ========== QUIZ SUBMIT / ADVANCE ========== */
 function submitQuizAnswer(){
@@ -2110,6 +2315,16 @@ if(TIMER.active){
 }
 setInterval(()=>{tickTimer();tickQuizTimer()},1000);
 window.addEventListener('resize',()=>{render()});
+window.addEventListener('online',()=>{
+  if(!currentUser||!APP_READY)return;
+  if(localDirty) pushDataToCloud();
+  else pullDataFromCloud().then(()=>render());
+});
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'&&currentUser&&APP_READY&&localDirty){
+    pushDataToCloud();
+  }
+});
 </script>
 <script>
   if ('serviceWorker' in navigator) {
