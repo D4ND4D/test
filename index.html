@@ -6,6 +6,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="theme-color" content="#0c0e0f">
 <title>D4N's Study Assistant</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Study Assistant">
 <style>
 :root{--bg:#0c0e0f;--panel:#121517;--panel-2:#161a1c;--border:#22282b;--border-bright:#5ee6d0;--cyan:#5ee6d0;--amber:#f0b35e;--green:#7ee787;--red:#ff6b6b;--grey:#7b8389;--grey-dim:#52585c;--white:#e9edee}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -1252,7 +1257,7 @@ function pageSettings(){
       <button class="menu-item" data-go="home" data-clearstack="1"><span class="icon">↩️</span><span class="label">Back to Main Menu</span></button>
     </div>
     <div class="page-sub" style="margin-top:16px;">(LEAVE BLANK)</div>
-    <div class="page-sub" style="margin-top:2px;color:var(--grey-dim);font-size:10.5px;">V4.8.0-auth</div>
+    <div class="page-sub" style="margin-top:2px;color:var(--grey-dim);font-size:10.5px;">V4.8.1-pwa</div>
   `;
   return shell("SETTINGS","",body,{path:"~/study/settings"});
 }
@@ -2105,5 +2110,15 @@ if(TIMER.active){
 setInterval(()=>{tickTimer();tickQuizTimer()},1000);
 window.addEventListener('resize',()=>{render()});
 </script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js')
+        .then(() => console.log('✅ Service worker registered'))
+        .catch(err => console.warn('SW registration failed:', err));
+    });
+  }
+</script>
 </body>
+</html>
 </html>
