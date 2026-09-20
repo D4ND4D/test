@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'd4n-study-v1';
+const CACHE_VERSION = 'd4n-study-v2';
 const APP_SHELL = [
   './',
   './index.html',
