@@ -1429,8 +1429,6 @@ function planLabel(u){
   if(p==="monthly")return "📅 Monthly";
   return "—";
 }
-  return"pending";
-}
 function pageAdminPanel(){
   if(!isAdmin()){
     return shell("ADMIN","",emptyState("🚫","Not authorized.","This area is only for the owner.")+backBtn("home","Back to menu"),{path:"~/study/admin"});
@@ -2256,7 +2254,7 @@ function attachHandlers(){
       const plan=el.dataset.plan||null;
       adminAction(action,uid,plan);
     });
-  });
+  }
 
 /* ========== QUIZ SUBMIT / ADVANCE ========== */
 function submitQuizAnswer(){
@@ -2336,5 +2334,4 @@ document.addEventListener('visibilitychange',()=>{
   }
 </script>
 </body>
-</html>
 </html>
