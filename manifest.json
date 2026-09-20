@@ -1,0 +1,25 @@
+{
+  "name": "D4N's Study Assistant",
+  "short_name": "Study",
+  "description": "Flashcards, quizzes, notes, and study timers — works offline.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0c0e0f",
+  "theme_color": "#0c0e0f",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
