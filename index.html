@@ -2247,14 +2247,15 @@ function attachHandlers(){
   });
   const adminRefresh=document.getElementById("adminRefreshBtn");
   if(adminRefresh)adminRefresh.addEventListener("click",()=>{adminUsersCache=null;render()});
-    app.querySelectorAll("[data-admin-action]").forEach(el=>{
+      app.querySelectorAll("[data-admin-action]").forEach(el=>{
     el.addEventListener("click",()=>{
       const action=el.dataset.adminAction;
       const uid=el.dataset.uid;
       const plan=el.dataset.plan||null;
       adminAction(action,uid,plan);
     });
-  }
+  });
+}
 
 /* ========== QUIZ SUBMIT / ADVANCE ========== */
 function submitQuizAnswer(){
