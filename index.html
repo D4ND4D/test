@@ -122,6 +122,12 @@ select.subj-select{width:100%;background:var(--bg);border:1px solid var(--border
 .mini-btn.amber{color:var(--amber);border-color:#5a4a1f}
 .mini-btn:active{transform:scale(.94)}
 .mini-btn.active{background:rgba(94,230,208,.12);color:var(--cyan);border-color:var(--cyan)}
+input[type=range]{width:100%;accent-color:var(--cyan);margin-bottom:14px;height:22px}
+details.tts-prefs{margin-bottom:14px}
+details.tts-prefs summary{cursor:pointer;color:var(--grey);font-size:12.5px;padding:8px 0;list-style:none;user-select:none}
+details.tts-prefs summary::-webkit-details-marker{display:none}
+details.tts-prefs summary::before{content:"▸ ";color:var(--cyan)}
+details.tts-prefs[open] summary::before{content:"▾ "}
 .wm-toggle{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:13px 14px;font-size:14px}
 .wm-toggle .switch{width:44px;height:24px;border-radius:12px;background:var(--border);position:relative;transition:background .2s;cursor:pointer;flex-shrink:0}
 .wm-toggle .switch::after{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:var(--grey);transition:transform .2s,background .2s}
@@ -205,9 +211,21 @@ let localDirty = false;
 let dataUnsubscribe = null;
 let planConfig = { monthlyDays: 30, termDays: 120 };
 let planConfigLoaded = false;
+let ttsPrefs = { voice: "", rate: 1, pitch: 1 };
+let historyFilter = "all";
+function loadTtsPrefs(){
+  try{
+    const raw = localStorage.getItem("d4n_tts_prefs");
+    if(raw) ttsPrefs = {...ttsPrefs, ...JSON.parse(raw)};
+  }catch(e){}
+}
+function saveTtsPrefs(){
+  try{ localStorage.setItem("d4n_tts_prefs", JSON.stringify(ttsPrefs)); }catch(e){}
+}
+loadTtsPrefs();
 
 /* ========== STORAGE ========== */
-const EMPTY_DATA = { flashcards:{}, study_sessions:[], notes:{} };
+const EMPTY_DATA = { flashcards:{}, study_sessions:[], notes:{}, topics:{} };
 const STORAGE_KEY = "d4n_study_data_v1";
 const TIMER_KEY = "d4n_timer_state_v1";
 const WM_ENABLED_KEY = "d4n_wm_enabled_v1";
@@ -226,10 +244,41 @@ let seqState = {};
 let dragState = null;
 let chirpInterval = null;
 
-function loadData(){try{const raw=localStorage.getItem(STORAGE_KEY);if(raw){const d=JSON.parse(raw);if(!d.flashcards)d.flashcards={};if(!d.study_sessions)d.study_sessions=[];if(!d.notes)d.notes={};return d}}catch(e){}const s=JSON.parse(JSON.stringify(EMPTY_DATA));saveData(s);return s}
-function saveData(d){   try{localStorage.setItem(STORAGE_KEY,JSON.stringify(d))}catch(e){}   localDirty = true;   if(!suppressPush) scheduleSyncPush(); }
+function loadData(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(raw){
+      const d = JSON.parse(raw);
+      if(!d.flashcards) d.flashcards = {};
+      if(!d.study_sessions) d.study_sessions = [];
+      if(!d.notes) d.notes = {};
+      if(!d.topics) d.topics = {};
+      return d;
+    }
+  }catch(e){}
+  const s = JSON.parse(JSON.stringify(EMPTY_DATA));
+  saveData(s);
+  return s;
+}
+function saveData(d){
+  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); }catch(e){}
+  localDirty = true;
+  if(!suppressPush) scheduleSyncPush();
+}
 function blankTimer(){return{active:false,endsAt:0,totalSeconds:0,alarming:false,paused:false,hidden:false,pausedRemaining:0}}
-function loadTimer(){try{const raw=localStorage.getItem(TIMER_KEY);if(raw){const t=JSON.parse(raw);if(typeof t.paused!=='boolean')t.paused=false;if(typeof t.hidden!=='boolean')t.hidden=false;if(typeof t.pausedRemaining!=='number')t.pausedRemaining=0;return t}}catch(e){}return blankTimer()}
+function loadTimer(){
+  try{
+    const raw=localStorage.getItem(TIMER_KEY);
+    if(raw){
+      const t=JSON.parse(raw);
+      if(typeof t.paused!=='boolean') t.paused=false;
+      if(typeof t.hidden!=='boolean') t.hidden=false;
+      if(typeof t.pausedRemaining!=='number') t.pausedRemaining=0;
+      return t;
+    }
+  }catch(e){}
+  return blankTimer();
+}
 function saveTimer(){try{localStorage.setItem(TIMER_KEY,JSON.stringify(TIMER))}catch(e){}}
 
 /* ========== AUTH ========== */
@@ -367,7 +416,7 @@ function startExpiryCheck(){
     if(exp<new Date()){APP_READY=false;showExpiredScreen()}
   },60000);
 }
-  function scheduleSyncPush(){
+function scheduleSyncPush(){
   if(!currentUser) return;
   if(currentUser.uid !== ADMIN_UID){
     if(!currentUserDoc || !currentUserDoc.approved) return;
@@ -379,7 +428,6 @@ function startExpiryCheck(){
   clearTimeout(syncDebounceTimer);
   syncDebounceTimer = setTimeout(pushDataToCloud, 1500);
 }
-
 async function pushDataToCloud(){
   if(!currentUser || !APP_READY) return;
   try{
@@ -387,6 +435,7 @@ async function pushDataToCloud(){
     await setDoc(ref, {
       flashcards: DATA.flashcards,
       notes: DATA.notes,
+      topics: DATA.topics,
       study_sessions: DATA.study_sessions,
       updatedAt: serverTimestamp()
     });
@@ -397,7 +446,6 @@ async function pushDataToCloud(){
     console.warn("Sync push failed:", e);
   }
 }
-
 async function pullDataFromCloud(){
   if(!currentUser) return;
   try{
@@ -408,6 +456,7 @@ async function pullDataFromCloud(){
       suppressPush = true;
       DATA.flashcards = cloud.flashcards || {};
       DATA.notes = cloud.notes || {};
+      DATA.topics = cloud.topics || {};
       DATA.study_sessions = cloud.study_sessions || [];
       try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(DATA)); }catch(e){}
       lastSyncedAt = cloud.updatedAt && cloud.updatedAt.toDate ? cloud.updatedAt.toDate() : new Date();
@@ -420,7 +469,6 @@ async function pullDataFromCloud(){
     console.warn("Sync pull failed (offline?):", e);
   }
 }
-
 function startDataListener(){
   if(dataUnsubscribe){ try{ dataUnsubscribe(); }catch(e){} dataUnsubscribe = null; }
   if(!currentUser) return;
@@ -435,6 +483,7 @@ function startDataListener(){
     suppressPush = true;
     DATA.flashcards = cloud.flashcards || {};
     DATA.notes = cloud.notes || {};
+    DATA.topics = cloud.topics || {};
     DATA.study_sessions = cloud.study_sessions || [];
     try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(DATA)); }catch(e){}
     lastSyncedAt = cloudTime;
@@ -445,11 +494,9 @@ function startDataListener(){
     console.warn("Snapshot error:", err);
   });
 }
-
 function stopDataListener(){
   if(dataUnsubscribe){ try{ dataUnsubscribe(); }catch(e){} dataUnsubscribe = null; }
 }
-
 function updateSyncIndicator(){
   const el = document.getElementById("syncStatus");
   if(!el) return;
@@ -461,7 +508,6 @@ function updateSyncIndicator(){
   else el.textContent = `Synced ${lastSyncedAt.toLocaleTimeString()}`;
 }
 setInterval(updateSyncIndicator, 5000);
-
 async function loadPlanConfig(){
   try{
     const ref = doc(db, "config", "plans");
@@ -477,7 +523,6 @@ async function loadPlanConfig(){
   }
   planConfigLoaded = true;
 }
-
 async function savePlanConfig(){
   try{
     await setDoc(doc(db, "config", "plans"), planConfig);
@@ -494,7 +539,6 @@ async function handleSignOut(){
   clearTimeout(syncDebounceTimer);
   try{await signOut(auth)}catch(e){toast("Sign out failed")}
 }
-
 onAuthStateChanged(auth,async(user)=>{
   if(!user){
     currentUser=null;currentUserDoc=null;APP_READY=false;
@@ -524,19 +568,146 @@ onAuthStateChanged(auth,async(user)=>{
 });
 
 /* ========== WINDOW MANAGER ========== */
-function loadWM(){try{WM_ENABLED=localStorage.getItem(WM_ENABLED_KEY)==="1";const raw=localStorage.getItem(WM_STATE_KEY);if(raw){const p=JSON.parse(raw);if(Array.isArray(p.windows))WM.windows=p.windows;if(typeof p.zCounter==='number')WM.zCounter=p.zCounter;if(p.focusedId)WM.focusedId=p.focusedId}}catch(e){}if(!WM.windows.find(w=>w.isHome)){const hw={id:genId('win'),page:'home',params:{},parentId:null,x:30,y:30,z:++WM.zCounter,isHome:true};WM.windows=WM.windows.filter(w=>!w.isHome);WM.windows.unshift(hw);WM.focusedId=hw.id}}
-function saveWM(){try{localStorage.setItem(WM_ENABLED_KEY,WM_ENABLED?"1":"0");localStorage.setItem(WM_STATE_KEY,JSON.stringify({windows:WM.windows,zCounter:WM.zCounter,focusedId:WM.focusedId}))}catch(e){}}
+function loadWM(){
+  try{
+    WM_ENABLED=localStorage.getItem(WM_ENABLED_KEY)==="1";
+    const raw=localStorage.getItem(WM_STATE_KEY);
+    if(raw){
+      const p=JSON.parse(raw);
+      if(Array.isArray(p.windows))WM.windows=p.windows;
+      if(typeof p.zCounter==='number')WM.zCounter=p.zCounter;
+      if(p.focusedId)WM.focusedId=p.focusedId;
+    }
+  }catch(e){}
+  if(!WM.windows.find(w=>w.isHome)){
+    const hw={id:genId('win'),page:'home',params:{},parentId:null,x:30,y:30,z:++WM.zCounter,isHome:true};
+    WM.windows=WM.windows.filter(w=>!w.isHome);
+    WM.windows.unshift(hw);
+    WM.focusedId=hw.id;
+  }
+}
+function saveWM(){
+  try{
+    localStorage.setItem(WM_ENABLED_KEY,WM_ENABLED?"1":"0");
+    localStorage.setItem(WM_STATE_KEY,JSON.stringify({windows:WM.windows,zCounter:WM.zCounter,focusedId:WM.focusedId}));
+  }catch(e){}
+}
 function windowedActive(){return WM_ENABLED&&window.innerWidth>=700}
 function wmWindowById(id){return WM.windows.find(w=>w.id===id)}
 function wmChildren(id){return WM.windows.filter(w=>w.parentId===id)}
 function wmDescendants(id){const out=[];const q=[id];while(q.length){const c=q.shift();wmChildren(c).forEach(k=>{out.push(k);q.push(k.id)})}return out}
 function wmClose(id){const w=wmWindowById(id);if(!w||w.isHome)return;const desc=wmDescendants(id).map(d=>d.id);const ids=new Set([id,...desc]);WM.windows=WM.windows.filter(x=>!ids.has(x.id));if(ids.has(WM.focusedId)){WM.focusedId=WM.windows.length?WM.windows[WM.windows.length-1].id:null}saveWM();render()}
 function wmCloseAllExceptHome(){WM.windows=WM.windows.filter(w=>w.isHome);WM.focusedId=WM.windows[0]?WM.windows[0].id:null;saveWM();render()}
-function wmOpen(page,params,parentId){const parent=parentId?wmWindowById(parentId):null;const merged={...(params||{})};if(merged.subject===undefined&&parent&&parent.params&&parent.params.subject!==undefined){merged.subject=parent.params.subject}const existing=WM.windows.find(w=>w.page===page);if(existing){const oldSubj=existing.params?existing.params.subject:undefined;const newSubj=merged.subject;if(newSubj!==undefined&&oldSubj!==undefined&&oldSubj!==newSubj){wmPropagateSubject(existing.id,oldSubj,newSubj);existing.params={...existing.params,...merged}}else{existing.params={...(existing.params||{}),...merged}}existing.z=++WM.zCounter;WM.focusedId=existing.id;saveWM();return existing}let x=40,y=40;if(parent){const sibCount=wmChildren(parentId).length;x=Math.min(parent.x+60+(sibCount%4)*30,Math.max(20,window.innerWidth-560));y=Math.min(parent.y+60+(sibCount%6)*30,Math.max(20,window.innerHeight-300));x=Math.max(20,x);y=Math.max(20,y)}const w={id:genId('win'),page,params:merged,parentId:parentId||null,x,y,z:++WM.zCounter,isHome:false};WM.windows.push(w);WM.focusedId=w.id;saveWM();return w}
-function wmGoBackTo(page,params){const cur=wmWindowById(CURRENT_WIN_ID);if(!cur)return;const merged={...(params||{})};if(merged.subject===undefined&&cur.params&&cur.params.subject!==undefined){merged.subject=cur.params.subject}const descIds=new Set(wmDescendants(cur.id).map(d=>d.id));const existing=WM.windows.find(w=>w.page===page&&w.id!==cur.id&&!descIds.has(w.id));if(existing){const toClose=new Set([cur.id,...descIds]);WM.windows=WM.windows.filter(w=>!toClose.has(w.id));existing.z=++WM.zCounter;WM.focusedId=existing.id;saveWM();render();return}const toClose=new Set(descIds);WM.windows=WM.windows.filter(w=>!toClose.has(w.id));cur.page=page;cur.params=merged;saveWM();render()}
-function wmReplace(page,params){const cur=wmWindowById(CURRENT_WIN_ID);if(!cur)return;const merged={...(params||{})};if(merged.subject===undefined&&cur.params&&cur.params.subject!==undefined){merged.subject=cur.params.subject}const descIds=new Set(wmDescendants(cur.id).map(d=>d.id));WM.windows=WM.windows.filter(w=>!descIds.has(w.id));cur.page=page;cur.params=merged;saveWM();render()}
-function wmFocusExisting(page,excludeId){const existing=WM.windows.find(w=>w.page===page&&w.id!==excludeId);if(!existing)return false;existing.z=++WM.zCounter;WM.focusedId=existing.id;saveWM();render();return true}
-function wmPropagateSubject(windowId,oldSubject,newSubject){const w=wmWindowById(windowId);if(!w)return;if(w.params&&w.params.subject===oldSubject)w.params.subject=newSubject;switch(w.page){case'study_session':{const cards=DATA.flashcards[newSubject]||[];if(cards.length){const order=cards.map((_,i)=>i);shuffle(order);w.params={subject:newSubject,order,idx:0,correct:0,revealed:false}}else{w.page='study_complete';w.params={subject:newSubject,correct:0,total:0}}break}case'study_complete':w.params={subject:newSubject,correct:0,total:0};break;case'quiz_session':case'quiz_complete':w.page='quiz_settings';w.params={subject:newSubject};break;case'edit_card_form':{const cards=DATA.flashcards[newSubject]||[];const idx=w.params.cardIdx||0;if(!cards.length||idx>=cards.length)w.params.cardIdx=0;break}case'read_view':{const notes=DATA.notes[newSubject]||[];if(!notes.find(n=>n.id===w.params.noteId)){w.page='read_menu';w.params={subject:newSubject}}break}case'read_write_form':{if(w.params.noteId){const notes=DATA.notes[newSubject]||[];if(!notes.find(n=>n.id===w.params.noteId)){w.page='read_menu';w.params={subject:newSubject}}}break}}wmDescendants(windowId).forEach(d=>wmPropagateSubject(d.id,oldSubject,newSubject))}
+function wmOpen(page,params,parentId){
+  const parent=parentId?wmWindowById(parentId):null;
+  const merged={...(params||{})};
+  if(merged.subject===undefined&&parent&&parent.params&&parent.params.subject!==undefined)merged.subject=parent.params.subject;
+  if(merged.topic===undefined&&parent&&parent.params&&parent.params.topic!==undefined&&!(params&&params.clearTopic))merged.topic=parent.params.topic;
+  const existing=WM.windows.find(w=>w.page===page);
+  if(existing){
+    const oldSubj=existing.params?existing.params.subject:undefined;
+    const newSubj=merged.subject;
+    const oldTopic=existing.params?existing.params.topic:undefined;
+    const newTopic=merged.topic;
+    if(newSubj!==undefined&&oldSubj!==undefined&&oldSubj!==newSubj){
+      wmPropagateSubject(existing.id,oldSubj,newSubj);
+      existing.params={...existing.params,...merged};
+    } else if(newTopic!==undefined&&oldTopic!==undefined&&oldTopic!==newTopic){
+      existing.params={...existing.params,...merged};
+    } else {
+      existing.params={...(existing.params||{}),...merged};
+    }
+    existing.z=++WM.zCounter;
+    WM.focusedId=existing.id;
+    saveWM();
+    return existing;
+  }
+  let x=40,y=40;
+  if(parent){
+    const sibCount=wmChildren(parentId).length;
+    x=Math.min(parent.x+60+(sibCount%4)*30,Math.max(20,window.innerWidth-560));
+    y=Math.min(parent.y+60+(sibCount%6)*30,Math.max(20,window.innerHeight-300));
+    x=Math.max(20,x);y=Math.max(20,y);
+  }
+  const w={id:genId('win'),page,params:merged,parentId:parentId||null,x,y,z:++WM.zCounter,isHome:false};
+  WM.windows.push(w);
+  WM.focusedId=w.id;
+  saveWM();
+  return w;
+}
+function wmGoBackTo(page,params){
+  const cur=wmWindowById(CURRENT_WIN_ID);
+  if(!cur)return;
+  const merged={...(params||{})};
+  if(merged.subject===undefined&&cur.params&&cur.params.subject!==undefined)merged.subject=cur.params.subject;
+  if(merged.topic===undefined&&cur.params&&cur.params.topic!==undefined&&!(params&&params.clearTopic))merged.topic=cur.params.topic;
+  const descIds=new Set(wmDescendants(cur.id).map(d=>d.id));
+  const existing=WM.windows.find(w=>w.page===page&&w.id!==cur.id&&!descIds.has(w.id));
+  if(existing){
+    const toClose=new Set([cur.id,...descIds]);
+    WM.windows=WM.windows.filter(w=>!toClose.has(w.id));
+    existing.z=++WM.zCounter;
+    WM.focusedId=existing.id;
+    saveWM();render();return;
+  }
+  const toClose=new Set(descIds);
+  WM.windows=WM.windows.filter(w=>!toClose.has(w.id));
+  cur.page=page;
+  cur.params=merged;
+  saveWM();render();
+}
+function wmReplace(page,params){
+  const cur=wmWindowById(CURRENT_WIN_ID);
+  if(!cur)return;
+  const merged={...(params||{})};
+  if(merged.subject===undefined&&cur.params&&cur.params.subject!==undefined)merged.subject=cur.params.subject;
+  if(merged.topic===undefined&&cur.params&&cur.params.topic!==undefined&&!(params&&params.clearTopic))merged.topic=cur.params.topic;
+  const descIds=new Set(wmDescendants(cur.id).map(d=>d.id));
+  WM.windows=WM.windows.filter(w=>!descIds.has(w.id));
+  cur.page=page;
+  cur.params=merged;
+  saveWM();render();
+}
+function wmFocusExisting(page,excludeId){
+  const existing=WM.windows.find(w=>w.page===page&&w.id!==excludeId);
+  if(!existing)return false;
+  existing.z=++WM.zCounter;
+  WM.focusedId=existing.id;
+  saveWM();render();
+  return true;
+}
+function wmPropagateSubject(windowId,oldSubject,newSubject){
+  const w=wmWindowById(windowId);if(!w)return;
+  if(w.params&&w.params.subject===oldSubject)w.params.subject=newSubject;
+  switch(w.page){
+    case 'topic_menu':
+    case 'study_session':
+    case 'quiz_session':
+    case 'quiz_complete':
+    case 'study_complete':
+    case 'flashcard_menu':
+    case 'card_list_view':
+    case 'manage_card_list':
+    case 'edit_card_form':
+    case 'add_card_form':
+    case 'delete_choice':
+    case 'delete_card_list':
+    case 'read_menu':
+    case 'read_new_choice':
+    case 'read_write_form':
+    case 'read_import':
+    case 'read_view':
+    case 'read_edit_list':
+    case 'topic_progress':
+    case 'manage_topics':
+    case 'add_topic_form':
+    case 'rename_topic_form':
+            w.page='topic_picker';
+      w.params={subject:newSubject,clearTopic:true};
+      break;
+  }
+  wmDescendants(windowId).forEach(d=>wmPropagateSubject(d.id,oldSubject,newSubject));
+}
 
 /* ========== HELPERS ========== */
 function normQ(q){return(q||"").trim().toLowerCase().replace(/\s+/g,' ')}
@@ -544,28 +715,62 @@ function genId(p){return `${p}_${Date.now().toString(36)}_${Math.random().toStri
 function slug(s){return(s||"").toLowerCase().replace(/\s+/g,'-').replace(/[^a-z0-9\-]/g,'')}
 function esc(s){const d=document.createElement("div");d.textContent=s==null?"":String(s);return d.innerHTML}
 function fmtDate(iso){if(!iso)return"—";const d=new Date(iso);if(isNaN(d))return"—";const mm=String(d.getMonth()+1).padStart(2,"0");const dd=String(d.getDate()).padStart(2,"0");const hh=String(d.getHours()).padStart(2,"0");const mi=String(d.getMinutes()).padStart(2,"0");return `${mm}/${dd} ${hh}:${mi}`}
-function fmtDateTime(dt){if(!dt)return"—";const d=dt.toDate?dt.toDate():new Date(dt);if(isNaN(d))return"—";return d.toLocaleDateString()}
-function subjects(){const primary=Object.keys(DATA.flashcards);const extra=Object.keys(DATA.notes).filter(s=>!DATA.flashcards.hasOwnProperty(s));return[...primary,...extra]}
+function subjects(){const primary=Object.keys(DATA.flashcards);const extra=Object.keys(DATA.notes).filter(s=>!DATA.flashcards.hasOwnProperty(s));return[...new Set([...primary,...extra])]}
 function cardCount(s){return(DATA.flashcards[s]||[]).length}
 function notesFor(s){return DATA.notes[s]||[]}
 function notesCount(s){return notesFor(s).length}
 function getNote(s,id){return notesFor(s).find(n=>n.id===id)}
-function ensureSubject(n){if(!DATA.flashcards[n])DATA.flashcards[n]=[];if(!DATA.notes[n])DATA.notes[n]=[]}
+function ensureSubject(n){
+  if(!DATA.flashcards[n])DATA.flashcards[n]=[];
+  if(!DATA.notes[n])DATA.notes[n]=[];
+  if(!DATA.topics[n])DATA.topics[n]=[];
+}
 function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
 function isAdmin(){return currentUser&&currentUser.uid===ADMIN_UID}
-    
+
+/* --- TOPIC HELPERS --- */
+function topicsFor(subject){
+  const stored=DATA.topics[subject]||[];
+  const fromItems=new Set();
+  (DATA.flashcards[subject]||[]).forEach(c=>{if(c.topic)fromItems.add(c.topic)});
+  (DATA.notes[subject]||[]).forEach(n=>{if(n.topic)fromItems.add(n.topic)});
+  const merged=new Set([...stored,...fromItems]);
+  return [...merged].sort((a,b)=>a.localeCompare(b));
+}
+function topicCardCount(subject,topic){return(DATA.flashcards[subject]||[]).filter(c=>c.topic===topic).length}
+function topicNoteCount(subject,topic){return(DATA.notes[subject]||[]).filter(n=>n.topic===topic).length}
+function cardsInTopic(subject,topic){return(DATA.flashcards[subject]||[]).filter(c=>c.topic===topic)}
+function notesInTopic(subject,topic){return(DATA.notes[subject]||[]).filter(n=>n.topic===topic)}
+function ensureTopic(subject,name){
+  if(!DATA.topics[subject])DATA.topics[subject]=[];
+  if(!DATA.topics[subject].includes(name))DATA.topics[subject].push(name);
+}
+function hasUntaggedItems(subject){
+  const cards=DATA.flashcards[subject]||[];
+  const notes=DATA.notes[subject]||[];
+  return cards.some(c=>!c.topic)||notes.some(n=>!n.topic);
+}
+function untaggedCount(subject){
+  const cards=DATA.flashcards[subject]||[];
+  const notes=DATA.notes[subject]||[];
+  return cards.filter(c=>!c.topic).length + notes.filter(n=>!n.topic).length;
+}
+function topicSessions(subject,topic){
+  return (DATA.study_sessions||[]).filter(s=>s.subject===subject&&(!topic||s.topic===topic));
+}
 /* ========== EXPORT / IMPORT ========== */
 function buildExportPayload(opts={}){
   const {subjectsFilter=null,includeData=true}=opts;
   const list=subjectsFilter?subjectsFilter:subjects();
-  const flashcards={},notes={};
+  const flashcards={},notes={},topics={};
   list.forEach(s=>{
-    flashcards[s]=(DATA.flashcards[s]||[]).map(c=>includeData?{...c}:{question:c.question,answer:c.answer,review_count:0,last_reviewed:null,created:c.created});
+    flashcards[s]=(DATA.flashcards[s]||[]).map(c=>includeData?{...c}:{question:c.question,answer:c.answer,topic:c.topic||"",review_count:0,last_reviewed:null,created:c.created});
     notes[s]=(DATA.notes[s]||[]).map(n=>({...n}));
+    topics[s]=[...(DATA.topics[s]||[])];
   });
   let study_sessions=[];
   if(includeData)study_sessions=DATA.study_sessions.filter(s=>!subjectsFilter||subjectsFilter.includes(s.subject));
-  return{type:"d4n_study_backup",version:2,exported_at:new Date().toISOString(),flashcards,notes,study_sessions};
+  return{type:"d4n_study_backup",version:3,exported_at:new Date().toISOString(),flashcards,notes,topics,study_sessions};
 }
 function downloadJSON(payload,base){
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});
@@ -581,30 +786,35 @@ function exportNoData(){downloadJSON(buildExportPayload({includeData:false}),"d4
 function exportSubject(s,inc){downloadJSON(buildExportPayload({subjectsFilter:[s],includeData:inc}),`d4n-study-${slug(s)}`)}
 function downloadExampleNotes(){
   const ex={notes:[
-    {title:"Example Topic Title",content:"This is where your notes go.\n\nYou can use multiple lines, blank lines,\nand any punctuation you like.\n\nTip: each entry in the array becomes one topic in Read Mode."},
-    {title:"Another Topic",content:"Here's a second topic so you can see how multiple notes look when imported.\n\nSave this file, replace the text, and import it back."}
+    {title:"Example Topic Title",topic:"Sample Topic",content:"This is where your notes go.\n\nYou can use multiple lines, blank lines,\nand any punctuation you like."},
+    {title:"Another Topic",topic:"Sample Topic",content:"Topics group related notes and flashcards together."}
   ]};
   downloadJSON(ex,"d4n-example-notes");
 }
 function downloadExampleBackup(){
-  const ex={type:"d4n_study_backup",version:2,exported_at:new Date().toISOString(),
-    flashcards:{"Example Subject":[{question:"What is a flashcard?",answer:"A card with a question on one side and the answer on the other.",review_count:0,last_reviewed:null,created:new Date().toISOString()}]},
-    notes:{"Example Subject":[{id:"note_example",title:"Example Topic",content:"Sample notes content.",created:new Date().toISOString()}]},
+  const ex={type:"d4n_study_backup",version:3,exported_at:new Date().toISOString(),
+    flashcards:{"Example Subject":[{question:"What is a flashcard?",answer:"A card with a question on one side and the answer on the other.",topic:"Basics",review_count:0,last_reviewed:null,created:new Date().toISOString()}]},
+    notes:{"Example Subject":[{id:"note_example",title:"Example Topic",content:"Sample notes content.",topic:"Basics",created:new Date().toISOString()}]},
+    topics:{"Example Subject":["Basics"]},
     study_sessions:[]};
   downloadJSON(ex,"d4n-example-backup");
 }
 function mergeImportedData(incoming){
-  const stats={newSubjects:0,newCards:0,skippedCards:0,newSessions:0,skippedSessions:0,newNotes:0,skippedNotes:0};
+  const stats={newSubjects:0,newCards:0,skippedCards:0,newSessions:0,skippedSessions:0,newNotes:0,skippedNotes:0,newTopics:0};
   const inFC=incoming.flashcards||{};
   for(const subject in inFC){
     const cards=inFC[subject]||[];
     if(!DATA.flashcards[subject]){DATA.flashcards[subject]=[];stats.newSubjects++}
+    if(!DATA.notes[subject])DATA.notes[subject]=[];
+    if(!DATA.topics[subject])DATA.topics[subject]=[];
     const existing=DATA.flashcards[subject];
     const existQ=new Set(existing.map(c=>normQ(c.question)));
     cards.forEach(card=>{
       const key=normQ(card.question);
       if(existQ.has(key)){stats.skippedCards++;return}
-      existing.push({question:card.question,answer:card.answer,review_count:card.review_count||0,last_reviewed:card.last_reviewed||null,created:card.created||new Date().toISOString()});
+      const t=card.topic||"";
+      existing.push({question:card.question,answer:card.answer,topic:t,review_count:card.review_count||0,last_reviewed:card.last_reviewed||null,created:card.created||new Date().toISOString()});
+      if(t&&!DATA.topics[subject].includes(t)){DATA.topics[subject].push(t);stats.newTopics++}
       existQ.add(key);stats.newCards++;
     });
   }
@@ -612,12 +822,22 @@ function mergeImportedData(incoming){
   for(const subject in inN){
     if(!DATA.notes[subject])DATA.notes[subject]=[];
     if(!DATA.flashcards[subject])DATA.flashcards[subject]=[];
+    if(!DATA.topics[subject])DATA.topics[subject]=[];
     const keys=new Set(DATA.notes[subject].map(n=>normQ(n.title)+"|"+normQ(n.content).slice(0,60)));
     (inN[subject]||[]).forEach(n=>{
       const key=normQ(n.title)+"|"+normQ(n.content).slice(0,60);
       if(keys.has(key)){stats.skippedNotes++;return}
-      DATA.notes[subject].push({id:n.id||genId('note'),title:n.title||"Untitled",content:n.content||"",created:n.created||new Date().toISOString()});
+      const t=n.topic||"";
+      DATA.notes[subject].push({id:n.id||genId('note'),title:n.title||"Untitled",content:n.content||"",topic:t,created:n.created||new Date().toISOString()});
+      if(t&&!DATA.topics[subject].includes(t)){DATA.topics[subject].push(t);stats.newTopics++}
       keys.add(key);stats.newNotes++;
+    });
+  }
+  const inT=incoming.topics||{};
+  for(const subject in inT){
+    if(!DATA.topics[subject])DATA.topics[subject]=[];
+    (inT[subject]||[]).forEach(t=>{
+      if(t&&!DATA.topics[subject].includes(t)){DATA.topics[subject].push(t);stats.newTopics++}
     });
   }
   const inS=incoming.study_sessions||[];
@@ -652,6 +872,25 @@ function parseImportedNotesFile(file,cb){
   reader.onerror=()=>cb(null,"Couldn't read that file.");
   reader.readAsText(file);
 }
+function parseCardsFile(file,cb){
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    const text=ev.target.result;
+    let cardsToAdd=[];
+    try{
+      const parsed=JSON.parse(text);
+      if(Array.isArray(parsed))cardsToAdd=parsed;
+      else if(parsed.cards&&Array.isArray(parsed.cards))cardsToAdd=parsed.cards;
+      else if(parsed.flashcards){
+        const firstSubj=Object.keys(parsed.flashcards)[0];
+        if(firstSubj)cardsToAdd=parsed.flashcards[firstSubj]||[];
+      }else{cb(null,"No flashcards found.");return}
+    }catch(e){cb(null,"Couldn't parse that JSON file.");return}
+    cb(cardsToAdd,null);
+  };
+  reader.onerror=()=>cb(null,"Couldn't read that file.");
+  reader.readAsText(file);
+}
 
 /* ========== TTS ========== */
 function ttsPlay(subject,noteId){
@@ -659,6 +898,12 @@ function ttsPlay(subject,noteId){
   if(!note||!('speechSynthesis' in window)){toast("Text-to-speech isn't available here");return}
   window.speechSynthesis.cancel();
   const utter=new SpeechSynthesisUtterance(note.content);
+  utter.rate = ttsPrefs.rate || 1;
+  utter.pitch = ttsPrefs.pitch || 1;
+  if(ttsPrefs.voice){
+    const v = window.speechSynthesis.getVoices().find(x => x.name === ttsPrefs.voice);
+    if(v) utter.voice = v;
+  }
   utter.onend=()=>{ttsState='stopped';ttsNoteId=null;ttsNoteTitle=null;renderFloatBar();if(nav.page==='read_view')render()};
   utter.onerror=()=>{ttsState='stopped';ttsNoteId=null;ttsNoteTitle=null;renderFloatBar()};
   ttsNoteId=noteId;ttsNoteTitle=note.title;ttsState='playing';
@@ -727,6 +972,10 @@ function quizTimeExpired(){
   let params=nav.params;
   if(windowedActive()){const w=wmWindowById(CURRENT_WIN_ID);if(w)params=w.params}
   if(params.checked)return;
+  if(params.answerMode==='mcq'){
+    params.checked=true;params.result='wrong';params.timedOut=true;params.userAnswer=params.userAnswer||'';
+    render();return;
+  }
   const input=document.getElementById('quizAnswerInput');
   const val=input?input.value.trim():'';
   if(val){submitQuizAnswer()}
@@ -738,9 +987,9 @@ function endQuizTimeUp(){
   if(params.ended)return;
   params.ended=true;
   const total=params.order.length;
-  DATA.study_sessions.push({subject:params.subject,date:new Date().toISOString(),score:(params.score/total)*100,cards_studied:total,correct_answers:params.score,type:'quiz'});
+  DATA.study_sessions.push({subject:params.subject,topic:params.topic||"",date:new Date().toISOString(),score:(params.score/total)*100,cards_studied:total,correct_answers:params.score,type:'quiz'});
   saveData(DATA);navStack=[];
-  const comp={subject:params.subject,score:params.score,total,timeUp:true};
+  const comp={subject:params.subject,topic:params.topic||"",score:params.score,total,timeUp:true};
   if(windowedActive()){const w=wmWindowById(CURRENT_WIN_ID);if(w){w.page='quiz_complete';w.params=comp;saveWM();render();return}}
   goto("quiz_complete",comp,false);
 }
@@ -796,6 +1045,112 @@ function answerSimilarity(user,expected){
   return Math.max(seq,Math.round(f1*100));
 }
 
+/* ========== STREAKS / GOALS / CHARTS ========== */
+function todayKey(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
+function dailyGoalKey(){return `d4n_goal_${currentUser?currentUser.uid:'anon'}`}
+function getDailyGoal(){
+  try{const v=parseInt(localStorage.getItem(dailyGoalKey()),10);return isNaN(v)?10:v}catch(e){return 10}
+}
+function setDailyGoal(v){try{localStorage.setItem(dailyGoalKey(),String(v))}catch(e){}}
+function sessionsByDay(){
+  const map={};
+  DATA.study_sessions.forEach(s=>{
+    const d=new Date(s.date);
+    if(isNaN(d))return;
+    const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    map[k]=(map[k]||0)+(s.cards_studied||0);
+  });
+  return map;
+}
+function currentStreak(){
+  const map=sessionsByDay();
+  const goal=getDailyGoal();
+  const meetsGoal=k=>(map[k]||0)>=goal;
+  let d=new Date();
+  let tk=todayKey();
+  if(!meetsGoal(tk)){d.setDate(d.getDate()-1);tk=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
+  let streak=0;
+  for(let i=0;i<400;i++){
+    if(meetsGoal(tk)){streak++}
+    else break;
+    d.setDate(d.getDate()-1);
+    tk=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+  return streak;
+}
+function bestStreak(){
+  const map=sessionsByDay();
+  const goal=getDailyGoal();
+  const keys=Object.keys(map).sort();
+  let best=0,cur=0,prevDate=null;
+  keys.forEach(k=>{
+    if((map[k]||0)<goal){cur=0;prevDate=k;return}
+    const d=new Date(k);
+    if(prevDate){
+      const pd=new Date(prevDate);
+      const diff=Math.round((d-pd)/86400000);
+      if(diff===1)cur++;else cur=1;
+    }else cur=1;
+    if(cur>best)best=cur;
+    prevDate=k;
+  });
+  return best;
+}
+function todayCardsStudied(){return sessionsByDay()[todayKey()]||0}
+function last14Days(){
+  const map=sessionsByDay();
+  const out=[];
+  const d=new Date();
+  for(let i=13;i>=0;i--){
+    const x=new Date(d);
+    x.setDate(x.getDate()-i);
+    const k=`${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`;
+    out.push({key:k,label:['S','M','T','W','T','F','S'][x.getDay()],cards:map[k]||0});
+  }
+  return out;
+}
+function barChartHTML(data,goal){
+  const max=Math.max(goal,...data.map(d=>d.cards),1);
+  return `<div style="display:flex;align-items:flex-end;gap:4px;height:110px;margin:14px 0 6px;padding:8px 4px;background:var(--bg);border:1px solid var(--border);border-radius:8px;">${data.map(d=>{
+    const h=Math.round((d.cards/max)*90);
+    const hit=d.cards>=goal;
+    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;justify-content:flex-end;">
+      <div style="width:100%;height:${h}px;background:${hit?'var(--green)':'var(--cyan)'};border-radius:3px;min-height:2px;opacity:${d.cards?1:.15};" title="${d.cards} cards on ${d.key}"></div>
+      <div style="font-size:9px;color:var(--grey-dim);">${d.label}</div>
+    </div>`;
+  }).join("")}</div>`;
+}
+
+/* ========== SUGGESTIONS ========== */
+async function submitSuggestion(text){
+  if(!currentUser) throw new Error("not signed in");
+  const ref = doc(collection(db,"suggestions"));
+  await setDoc(ref,{
+    text, uid: currentUser.uid,
+    displayId: currentUserDoc?.displayId || "",
+    username: currentUserDoc?.username || "",
+    createdAt: serverTimestamp(),
+    read: false
+  });
+}
+async function fetchSuggestions(){
+  const snap = await getDocs(collection(db,"suggestions"));
+  const out=[];
+  snap.forEach(d=>out.push({id:d.id,...d.data()}));
+  out.sort((a,b)=>{
+    const at=a.createdAt&&a.createdAt.toDate?a.createdAt.toDate():new Date(0);
+    const bt=b.createdAt&&b.createdAt.toDate?b.createdAt.toDate():new Date(0);
+    return bt-at;
+  });
+  return out;
+}
+async function markSuggestionRead(id,read){
+  await updateDoc(doc(db,"suggestions",id),{read:!!read});
+}
+async function deleteSuggestion(id){
+  await deleteDoc(doc(db,"suggestions",id));
+}
+
 /* ========== SHELL ========== */
 function shell(titleHTML,subtitle,bodyHTML,opts={}){
   const path=opts.path||"~/study";
@@ -823,6 +1178,7 @@ function goto(page,params={},push=true){
   if(push&&!windowedActive())navStack.push({page:nav.page,params:nav.params});
   const merged=Object.assign({},params);
   if(merged.subject===undefined&&nav.params&&nav.params.subject!==undefined)merged.subject=nav.params.subject;
+  if(merged.topic===undefined&&nav.params&&nav.params.topic!==undefined&&!merged.clearTopic)merged.topic=nav.params.topic;
   nav={page,params:merged};
   render();
 }
@@ -852,21 +1208,25 @@ function wmHandleGo(page,params,btn){
     render();
     return;
   }
-  if(page==='subject_menu'&&cur.page==='select_subject'){
-    const existing=WM.windows.find(w=>w.page==='subject_menu');
+  if(page==='topic_picker'&&cur.page==='select_subject'){
+    const existing=WM.windows.find(w=>w.page==='topic_picker');
     if(existing){
-      const oldSubject=existing.params.subject;
-      const newSubject=params.subject;
-      if(oldSubject!==newSubject){
-        wmPropagateSubject(existing.id,oldSubject,newSubject);
-        saveWM();
-        toast(`Switched to ${newSubject}`);
-      }
-      existing.z=++WM.zCounter;
-      WM.focusedId=existing.id;
-      saveWM();render();return;
+      existing.params.subject=params.subject;
+      delete existing.params.topic;
+      existing.z=++WM.zCounter;WM.focusedId=existing.id;saveWM();render();return;
     }
-    wmOpen(page,params,cur.id);
+    wmOpen(page,{subject:params.subject},cur.id);
+    render();
+    return;
+  }
+  if(page==='topic_menu'&&cur.page==='topic_picker'){
+    const existing=WM.windows.find(w=>w.page==='topic_menu');
+    if(existing){
+      existing.params.subject=params.subject;
+      existing.params.topic=params.topic;
+      existing.z=++WM.zCounter;WM.focusedId=existing.id;saveWM();render();return;
+    }
+    wmOpen(page,{subject:params.subject,topic:params.topic},cur.id);
     render();
     return;
   }
@@ -875,15 +1235,16 @@ function wmHandleGo(page,params,btn){
   render();
 }
 
-/* ========== PAGES ========== */
+/* ========== PAGES (part 2 of 3) ========== */
 function pageHome(){
-  const adminBtn=isAdmin()?`<button class="menu-item accent" data-go="admin_panel"><span class="num">5.</span><span class="icon">🛡️</span><span class="label">Admin Panel</span><span class="meta">manage users</span></button>`:"";
+  const adminBtn=isAdmin()?`<button class="menu-item accent" data-go="admin_panel"><span class="num">6.</span><span class="icon">🛡️</span><span class="label">Admin Panel</span><span class="meta">manage users</span></button>`:"";
   const body=`
     <div class="menu">
       <button class="menu-item" data-go="select_subject"><span class="num">1.</span><span class="icon">📚</span><span class="label">Select Subject</span><span class="meta">${subjects().length} subjects</span></button>
       <button class="menu-item" data-go="timer"><span class="num">2.</span><span class="icon">⏰</span><span class="label">Set Study Timer</span></button>
       <button class="menu-item" data-go="progress"><span class="num">3.</span><span class="icon">📊</span><span class="label">View Progress</span><span class="meta">${DATA.study_sessions.length} sessions</span></button>
       <button class="menu-item" data-go="sync_data"><span class="num">4.</span><span class="icon">🔄</span><span class="label">Import / Export</span></button>
+      <button class="menu-item" data-go="search"><span class="num">5.</span><span class="icon">🔍</span><span class="label">Search</span><span class="meta">all subjects</span></button>
       ${adminBtn}
     </div>
   `;
@@ -896,7 +1257,7 @@ function pageSelectSubject(){
     body+=`</div>`+emptyState("📭","No subjects yet.","Add one above to get started.");
   }else{
     subs.forEach((s,i)=>{
-      body+=`<button class="menu-item" data-go="subject_menu" data-subject="${esc(s)}"><span class="num">${i+1}.</span><span class="label">${esc(s)}</span><span class="meta">${cardCount(s)} cards · ${notesCount(s)} notes</span></button>`;
+      body+=`<button class="menu-item" data-go="topic_picker" data-subject="${esc(s)}"><span class="num">${i+1}.</span><span class="label">${esc(s)}</span><span class="meta">${cardCount(s)} cards · ${topicsFor(s).length} topics</span></button>`;
     });
     body+=`</div>`;
   }
@@ -911,120 +1272,448 @@ function pageNewSubjectForm(){
   `;
   return shell("CREATE SUBJECT","",body,{path:"~/study/subjects/new"});
 }
-function pageSubjectMenu(){
+function pageTopicPicker(){
   const subject=nav.params.subject;
-  const cc=cardCount(subject);
-  const studyBtn=cc>0?`<button class="menu-item" data-study-subject="${esc(subject)}"><span class="num">2.</span><span class="icon">📖</span><span class="label">Study Flashcards</span></button>`:`<button class="menu-item" style="opacity:.55;" data-go="flashcard_menu"><span class="num">2.</span><span class="icon">📖</span><span class="label">Study Flashcards</span><span class="meta">Add cards first</span></button>`;
+  if(hasUntaggedItems(subject)&&!nav.params.assigned){
+    return shell("SET UP TOPICS",subject,
+      `<div class="card"><div class="qa-label" style="color:var(--amber);">⚠️ First time here</div>
+       <div class="qa-text" style="font-size:13.5px;">You have <strong>${untaggedCount(subject)}</strong> item${untaggedCount(subject)===1?'':'s'} (flashcards / notes) with no topic yet. Give them a topic so you can study them in one place.</div></div>
+       <label class="field-label">Topic name for existing items</label>
+       <input type="text" id="initialTopicName" placeholder="e.g. General" value="General" autofocus>
+       <div class="page-sub" style="margin-top:-6px;font-size:11px;color:var(--grey-dim);">You can rename or split them later.</div>
+       <button class="btn btn-primary" id="assignInitialTopicBtn">Assign topic &amp; continue</button>`,
+      {path:`~/study/${slug(subject)}/topics/new`});
+  }
+  const topics=topicsFor(subject);
+  let body=``;
+  if(topics.length===0){
+    body+=emptyState("📭","No topics yet.","Add one below to start studying.");
+  }else{
+    body+=`<div class="menu">`;
+    topics.forEach((t,i)=>{
+      const cc=topicCardCount(subject,t), nc=topicNoteCount(subject,t);
+      body+=`<button class="menu-item" data-go="topic_menu" data-subject="${esc(subject)}" data-topic="${esc(t)}">
+        <span class="num">${i+1}.</span><span class="icon">📚</span><span class="label">${esc(t)}</span>
+        <span class="meta">${cc} cards${nc?' · '+nc+' notes':''}</span></button>`;
+    });
+    body+=`</div>`;
+  }
+  body+=`<div class="menu" style="margin-top:14px;">
+    <button class="menu-item accent" data-go="manage_topics"><span class="icon">🏷️</span><span class="label">Manage Topics</span><span class="meta">add / rename / delete</span></button>
+    <button class="menu-item" data-go="select_subject" data-clearstack="1"><span class="icon">↩️</span><span class="label">Back to Subjects</span></button>
+  </div>`;
+  return shell(esc(subject).toUpperCase(),"Pick a topic",body,{path:`~/study/${slug(subject)}`});
+}
+function pageTopicMenu(){
+  const subject=nav.params.subject;
+  const topic=nav.params.topic;
+  const cc=topicCardCount(subject,topic);
+  const nc=topicNoteCount(subject,topic);
+  const studyBtn=cc>0?`<button class="menu-item" data-study-topic="${esc(topic)}"><span class="num">2.</span><span class="icon">📖</span><span class="label">Study Flashcards</span></button>`:`<button class="menu-item" style="opacity:.55;" data-go="flashcard_menu"><span class="num">2.</span><span class="icon">📖</span><span class="label">Study Flashcards</span><span class="meta">Add cards first</span></button>`;
   const quizBtn=cc>=2?`<button class="menu-item" data-go="quiz_settings"><span class="num">4.</span><span class="icon">🎯</span><span class="label">Take Quiz</span></button>`:`<button class="menu-item" style="opacity:.55;" data-go="flashcard_menu"><span class="num">4.</span><span class="icon">🎯</span><span class="label">Take Quiz</span><span class="meta">Need 2+ cards</span></button>`;
   const body=`
     <div class="menu">
       <button class="menu-item" data-go="flashcard_menu"><span class="num">1.</span><span class="icon">📝</span><span class="label">Flashcard Manager</span><span class="meta">${cc} cards</span></button>
       ${studyBtn}
-      <button class="menu-item" data-go="read_menu"><span class="num">3.</span><span class="icon">🔊</span><span class="label">Read Mode</span><span class="meta">${notesCount(subject)} notes</span></button>
+      <button class="menu-item" data-go="read_menu"><span class="num">3.</span><span class="icon">🔊</span><span class="label">Read Mode</span><span class="meta">${nc} notes</span></button>
       ${quizBtn}
-      <button class="menu-item" data-go="subject_progress"><span class="num">5.</span><span class="icon">📊</span><span class="label">View Progress</span></button>
-      <button class="menu-item" data-go="select_subject" data-clearstack="1"><span class="num">6.</span><span class="icon">↩️</span><span class="label">Back to Subjects</span></button>
+      <button class="menu-item" data-go="topic_progress"><span class="num">5.</span><span class="icon">📊</span><span class="label">View Progress</span></button>
+      <button class="menu-item" data-go="topic_picker" data-clearstack="1" data-subject="${esc(subject)}" data-clearTopic="1"><span class="num">6.</span><span class="icon">↩️</span><span class="label">Back to Topics</span></button>
     </div>
   `;
-  return shell(esc(subject).toUpperCase(),"Subject menu",body,{path:`~/study/${slug(subject)}`});
+  return shell(esc(topic).toUpperCase(),esc(subject),body,{path:`~/study/${slug(subject)}/${slug(topic)}`});
+}
+function pageManageTopics(){
+  const subject=nav.params.subject;
+  const topics=topicsFor(subject);
+  let body=`<div class="menu"><button class="menu-item accent" data-go="add_topic_form"><span class="icon">➕</span><span class="label">Add New Topic</span></button></div>`;
+  if(topics.length===0){
+    body+=emptyState("📭","No topics yet.","Add one above.");
+  }else{
+    body+=`<div style="margin-top:14px;">`;
+    topics.forEach(t=>{
+      body+=`<div class="note-row">
+        <span class="nr-title">${esc(t)}</span>
+        <button class="mini-btn" data-rename-topic="${esc(t)}">✏️</button>
+        <button class="mini-btn danger" data-delete-topic="${esc(t)}">🗑️</button>
+      </div>`;
+    });
+    body+=`</div>`;
+  }
+    body+=`<div class="menu" style="margin-top:14px;">
+    <button class="menu-item" data-go="rename_subject_form"><span class="icon">✏️</span><span class="label">Rename Subject</span><span class="meta">${esc(subject)}</span></button>
+    <button class="menu-item" data-go="topic_picker" data-clearstack="1" data-clearTopic="1"><span class="icon">↩️</span><span class="label">Back to Topics</span></button>
+  </div>`;
+  return shell("MANAGE TOPICS",subject,body,{path:`~/study/${slug(subject)}/topics`});
+}
+function pageAddTopicForm(){
+  const subject=nav.params.subject;
+  const body=`
+    <label class="field-label">New topic name</label>
+    <input type="text" id="newTopicName" placeholder="e.g. Matrix" autofocus>
+    <div class="btn-row"><button class="btn btn-ghost" data-back="1">Cancel</button><button class="btn btn-primary" id="addTopicGo">Create Topic</button></div>
+  `;
+  return shell("ADD TOPIC",subject,body,{path:`~/study/${slug(subject)}/topics/new`});
+}
+function pageRenameTopicForm(){
+  const subject=nav.params.subject;
+  const topic=nav.params.topic;
+  const body=`
+    <div class="page-sub" style="margin-top:-6px;">Renaming topic in <strong style="color:var(--amber);">${esc(subject)}</strong></div>
+    <label class="field-label">New name</label>
+    <input type="text" id="renameTopicName" value="${esc(topic)}" autofocus>
+    <div class="page-sub" style="margin-top:-6px;font-size:11px;color:var(--grey-dim);">Updates every card, note, and past session record.</div>
+    <div class="btn-row"><button class="btn btn-ghost" data-back="1">Cancel</button><button class="btn btn-primary" id="renameTopicGo">Rename</button></div>
+  `;
+  return shell("RENAME TOPIC",subject,body,{path:`~/study/${slug(subject)}/topics/rename`});
+}
+function pageSearch(){
+  const q = (nav.params.q || "").trim();
+  const qNorm = q.toLowerCase();
+  let results = { cards: [], notes: [], subjects: [] };
+  if(qNorm.length >= 2){
+    subjects().forEach(s=>{
+      if(s.toLowerCase().includes(qNorm)) results.subjects.push(s);
+    });
+    for(const subject in DATA.flashcards){
+      (DATA.flashcards[subject]||[]).forEach((c, idx)=>{
+        const hit = c.question.toLowerCase().includes(qNorm) || c.answer.toLowerCase().includes(qNorm);
+        if(hit) results.cards.push({subject, idx, card: c});
+      });
+    }
+    for(const subject in DATA.notes){
+      (DATA.notes[subject]||[]).forEach(n=>{
+        const hit = n.title.toLowerCase().includes(qNorm) || n.content.toLowerCase().includes(qNorm);
+        if(hit) results.notes.push({subject, note: n});
+      });
+    }
+  }
+  let body = `
+    <label class="field-label">Search subjects, topics, cards, and notes</label>
+    <input type="text" id="searchInput" placeholder="Type at least 2 characters..." value="${esc(q)}" autofocus>
+  `;
+  if(qNorm.length >= 2){
+    const total = results.cards.length + results.notes.length + results.subjects.length;
+    if(total === 0){
+      body += emptyState("🔍","No matches.","Try a different word.");
+    } else {
+      body += `<div class="page-sub" style="margin-top:-8px;">${total} result${total===1?'':'s'}</div>`;
+      if(results.subjects.length){
+        body += `<div class="qa-label" style="color:var(--amber);margin:14px 0 8px;">📚 Subjects (${results.subjects.length})</div>`;
+        results.subjects.slice(0,20).forEach(s=>{
+          body += `<div class="list-row" data-goto-subject data-subject="${esc(s)}">
+            <div style="flex:1;overflow:hidden;">
+              <div style="font-size:13.5px;">${esc(s)}</div>
+              <div style="font-size:11px;color:var(--grey-dim);margin-top:2px;">${cardCount(s)} cards · ${topicsFor(s).length} topics</div>
+            </div>
+          </div>`;
+        });
+      }
+      if(results.cards.length){
+        body += `<div class="qa-label" style="color:var(--amber);margin:14px 0 8px;">📝 Flashcards (${results.cards.length})</div>`;
+        results.cards.slice(0,60).forEach(r=>{
+          body += `<div class="list-row" data-goto-card data-subject="${esc(r.subject)}" data-idx="${r.idx}">
+            <div style="flex:1;overflow:hidden;">
+              <div style="font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(r.card.question)}</div>
+              <div style="font-size:11px;color:var(--grey-dim);margin-top:2px;">${esc(r.subject)}${r.card.topic?' · '+esc(r.card.topic):''}</div>
+            </div>
+          </div>`;
+        });
+      }
+      if(results.notes.length){
+        body += `<div class="qa-label" style="color:var(--amber);margin:14px 0 8px;">📖 Notes (${results.notes.length})</div>`;
+        results.notes.slice(0,60).forEach(r=>{
+          body += `<div class="list-row" data-goto-note data-subject="${esc(r.subject)}" data-note-id="${esc(r.note.id)}">
+            <div style="flex:1;overflow:hidden;">
+              <div style="font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(r.note.title)}</div>
+              <div style="font-size:11px;color:var(--grey-dim);margin-top:2px;">${esc(r.subject)}${r.note.topic?' · '+esc(r.note.topic):''}</div>
+            </div>
+          </div>`;
+        });
+      }
+    }
+  } else if(q.length > 0){
+    body += `<div class="page-sub" style="margin-top:10px;">Type at least 2 characters.</div>`;
+  }
+  body += backBtn("home","Back to Main Menu");
+  return shell("SEARCH", "", body, {path:"~/study/search"});
+}
+function pageRenameSubjectForm(){
+  const subject=nav.params.subject;
+  const body = `
+    <div class="page-sub" style="margin-top:-6px;">Renaming: <strong style="color:var(--amber);">${esc(subject)}</strong></div>
+    <label class="field-label">New subject name</label>
+    <input type="text" id="renameSubjectName" value="${esc(subject)}" autofocus>
+    <div class="page-sub" style="margin-top:-6px;font-size:11px;color:var(--grey-dim);">Updates flashcards, notes, topics, and past sessions.</div>
+    <div class="btn-row"><button class="btn btn-ghost" data-back="1">Cancel</button><button class="btn btn-primary" id="renameSubjectGo">Rename</button></div>
+  `;
+  return shell("RENAME SUBJECT", "", body, {path:`~/study/${slug(subject)}/rename`});
 }
 function pageFlashcardMenu(){
   const subject=nav.params.subject;
+  const topic=nav.params.topic;
+  const cc=topicCardCount(subject,topic);
   const body=`
-    <div class="page-sub" style="margin-top:-6px;">Subject: <strong style="color:var(--amber);">${esc(subject)}</strong></div>
+    <div class="page-sub" style="margin-top:-6px;">Topic: <strong style="color:var(--amber);">${esc(topic)}</strong></div>
     <div class="menu">
       <button class="menu-item accent" data-go="add_card_form"><span class="num">1.</span><span class="icon">➕</span><span class="label">Add New Flashcard</span></button>
-      <button class="menu-item" data-go="card_list_view"><span class="num">2.</span><span class="icon">👀</span><span class="label">View All Cards</span><span class="meta">${cardCount(subject)} cards</span></button>
-      <button class="menu-item" data-go="manage_card_list"><span class="num">3.</span><span class="icon">✏️</span><span class="label">Edit a Flashcard</span></button>
-      <button class="menu-item danger" data-go="delete_choice"><span class="num">4.</span><span class="icon">🗑️</span><span class="label">Delete Subject / Flashcard</span></button>
-      <button class="menu-item" data-go="subject_menu" data-clearstack="1"><span class="num">5.</span><span class="icon">↩️</span><span class="label">Back to Subject Menu</span></button>
+      <button class="menu-item" data-go="card_list_view"><span class="num">2.</span><span class="icon">👀</span><span class="label">View All Cards</span><span class="meta">${cc} cards</span></button>
+      <button class="menu-item" data-go="manage_card_list"><span class="num">3.</span><span class="icon">✏️</span><span class="label">Edit / Bulk Edit</span></button>
+      <button class="menu-item" data-go="read_import_cards"><span class="num">4.</span><span class="icon">📥</span><span class="label">Import Cards into Topic</span></button>
+      <button class="menu-item danger" data-go="delete_choice"><span class="num">5.</span><span class="icon">🗑️</span><span class="label">Delete Card(s)</span></button>
+      <button class="menu-item" data-go="topic_menu" data-clearstack="1"><span class="num">6.</span><span class="icon">↩️</span><span class="label">Back to Topic</span></button>
     </div>
   `;
-  return shell("FLASHCARD MANAGER","",body,{path:`~/study/${slug(subject)}/flashcards`});
+  return shell("FLASHCARD MANAGER",topic,body,{path:`~/study/${slug(subject)}/${slug(topic)}/flashcards`});
 }
 function pageAddCardForm(){
   const subject=nav.params.subject;
+  const topic=nav.params.topic;
   const body=`
-    <div class="page-sub" style="margin-top:-6px;">Adding to: <strong style="color:var(--amber);">${esc(subject)}</strong></div>
+    <div class="page-sub" style="margin-top:-6px;">Adding to <strong style="color:var(--amber);">${esc(subject)}</strong> › <strong style="color:var(--amber);">${esc(topic)}</strong></div>
     <label class="field-label">Question</label>
     <textarea id="cardQuestion" placeholder="What is...?" autofocus></textarea>
     <label class="field-label">Answer</label>
     <textarea id="cardAnswer" placeholder="The answer is..."></textarea>
     <div class="btn-row"><button class="btn btn-ghost" data-go="flashcard_menu" data-clearstack="1">Done</button><button class="btn btn-primary" id="addCardGo">Add Card</button></div>
-    <div class="page-sub" style="margin-top:10px;">Card added automatically saves — add another or tap Done.</div>
+    <div class="page-sub" style="margin-top:10px;">Cards lock to this topic automatically.</div>
   `;
-  return shell("ADD NEW FLASHCARD","",body,{path:`~/study/${slug(subject)}/add`});
+  return shell("ADD FLASHCARD",subject,body,{path:`~/study/${slug(subject)}/${slug(topic)}/add`});
 }
 function pageCardListView(){
   const subject=nav.params.subject;
-  const cards=DATA.flashcards[subject]||[];
+  const topic=nav.params.topic;
+  const cards=cardsInTopic(subject,topic);
   let body;
-  if(cards.length===0){body=emptyState("📭","No cards yet.","Add some flashcards to get started.")}
+  if(cards.length===0){body=emptyState("📭","No cards in this topic yet.","")}
   else{
     const rows=cards.map(c=>`<div class="list-row"><span class="lr-q">${esc(c.question)}</span><span class="lr-meta">${c.review_count||0}× reviewed</span></div>`).join("");
-    body=`${rows}<hr class="div"><div class="page-sub" style="margin-bottom:0;">Total cards: ${cards.length}</div>`;
+    body=`${rows}<hr class="div"><div class="page-sub" style="margin-bottom:0;">Total: ${cards.length}</div>`;
   }
   body+=backBtn("flashcard_menu","Back");
-  return shell("ALL CARDS",subject,body,{path:`~/study/${slug(subject)}/cards`});
+  return shell("ALL CARDS",topic,body,{path:`~/study/${slug(subject)}/${slug(topic)}/cards`});
 }
 function pageManageCardList(){
   const subject=nav.params.subject;
-  const cards=DATA.flashcards[subject]||[];
+  const topic=nav.params.topic;
+  const cards=cardsInTopic(subject,topic);
   if(cards.length===0){
-    return shell("EDIT FLASHCARD",subject,emptyState("📭","No cards in this subject.","")+backBtn("flashcard_menu","Back to menu"),{path:`~/study/${slug(subject)}/edit/list`});
+    return shell("EDIT CARDS",topic,emptyState("📭","No cards in this topic yet.","")+backBtn("flashcard_menu","Back"),{path:`~/study/${slug(subject)}/${slug(topic)}/edit`});
   }
-  let body=`<div class="page-sub" style="margin-top:-6px;">Tap a card to fix spelling or wording</div><div class="menu">`;
-  cards.forEach((card,i)=>{body+=`<button class="menu-item" data-pick-edit-card="${i}"><span class="num">${i+1}.</span><span class="label">${esc(card.question)}</span></button>`});
-  body+=`</div>`+backBtn("flashcard_menu","Back to menu");
-  return shell("EDIT FLASHCARD",subject,body,{path:`~/study/${slug(subject)}/edit/list`});
+  let body=`<div class="page-sub" style="margin-top:-6px;">Tap a card to edit</div><div class="menu">`;
+  cards.forEach((card)=>{
+    const realIdx=(DATA.flashcards[subject]||[]).indexOf(card);
+    body+=`<button class="menu-item" data-pick-edit-card="${realIdx}"><span class="label">${esc(card.question)}</span></button>`;
+  });
+  body+=`</div><div class="btn-row" style="margin-top:14px;"><button class="btn btn-ghost" data-go="bulk_edit_cards">🧰 Bulk edit</button></div>`;
+  body+=backBtn("flashcard_menu","Back");
+  return shell("EDIT CARDS",topic,body,{path:`~/study/${slug(subject)}/${slug(topic)}/edit`});
+}
+function pageBulkEditCards(){
+  const subject=nav.params.subject;
+  const topic=nav.params.topic;
+  const cards=cardsInTopic(subject,topic);
+  if(cards.length===0){
+    return shell("BULK EDIT",topic,emptyState("📭","No cards here.","")+backBtn("manage_card_list","Back"),{path:`~/study/${slug(subject)}/${slug(topic)}/bulk`});
+  }
+  const rows=cards.map(card=>{
+    const realIdx=(DATA.flashcards[subject]||[]).indexOf(card);
+    return `<div class="note-row">
+      <input type="checkbox" class="bulk-cb" data-bulk-idx="${realIdx}" style="width:auto;margin:0;flex-shrink:0;">
+      <span class="nr-title">${esc(card.question)}</span>
+    </div>`;
+  }).join("");
+  const body=`
+    <div class="page-sub" style="margin-top:-6px;">Select cards, then choose an action</div>
+    <div style="max-height:45vh;overflow-y:auto;margin-bottom:14px;">${rows}</div>
+    <button class="btn btn-primary" id="bulkSelectAllBtn">Select all / none</button>
+    <div class="page-sub" style="margin-top:14px;margin-bottom:6px;">Move selected to another topic:</div>
+    <input type="text" id="bulkMoveTopic" placeholder="Topic name (new or existing)">
+    <div class="btn-row">
+      <button class="btn btn-ghost" id="bulkMoveBtn">↪ Move</button>
+      <button class="btn btn-danger" id="bulkDeleteBtn">🗑 Delete</button>
+    </div>
+    ${backBtn("manage_card_list","Back")}
+  `;
+  return shell("BULK EDIT",topic,body,{path:`~/study/${slug(subject)}/${slug(topic)}/bulk`});
 }
 function pageEditCardForm(){
-  const{subject,cardIdx}=nav.params;
+  const{subject,topic,cardIdx}=nav.params;
   const card=(DATA.flashcards[subject]||[])[cardIdx]||{question:'',answer:''};
   const body=`
-    <div class="page-sub" style="margin-top:-6px;">Editing card in: <strong style="color:var(--amber);">${esc(subject)}</strong></div>
+    <div class="page-sub" style="margin-top:-6px;">Editing in <strong style="color:var(--amber);">${esc(topic)}</strong></div>
     <label class="field-label">Question</label>
     <textarea id="editQuestion" autofocus>${esc(card.question)}</textarea>
     <label class="field-label">Answer</label>
     <textarea id="editAnswer">${esc(card.answer)}</textarea>
     <div class="btn-row"><button class="btn btn-ghost" data-back="1">Cancel</button><button class="btn btn-primary" id="saveEditBtn">Save Changes</button></div>
   `;
-  return shell("EDIT FLASHCARD","",body,{path:`~/study/${slug(subject)}/edit/card`});
+  return shell("EDIT FLASHCARD",subject,body,{path:`~/study/${slug(subject)}/${slug(topic)}/edit`});
 }
 function pageDeleteChoice(){
   const subject=nav.params.subject;
-  const n=cardCount(subject);
+  const topic=nav.params.topic;
+  const n=topicCardCount(subject,topic);
   const body=`
-    <div class="page-sub" style="margin-top:-6px;">Subject: <strong style="color:var(--amber);">${esc(subject)}</strong></div>
+    <div class="page-sub" style="margin-top:-6px;">Topic: <strong style="color:var(--amber);">${esc(topic)}</strong></div>
     <div class="menu">
-      <button class="menu-item danger" id="delEntireSubject"><span class="num">1.</span><span class="icon">🗑️</span><span class="label">Delete entire subject (${n} cards, ${notesCount(subject)} notes)</span></button>
-      <button class="menu-item" data-go="delete_card_list"><span class="num">2.</span><span class="icon">🃏</span><span class="label">Delete a specific card</span></button>
+      <button class="menu-item" data-go="delete_card_list"><span class="num">1.</span><span class="icon">🃏</span><span class="label">Delete specific cards</span><span class="meta">${n} in this topic</span></button>
+      <button class="menu-item danger" id="delTopicAndCardsBtn"><span class="num">2.</span><span class="icon">🗑️</span><span class="label">Delete entire topic (${n} cards + notes)</span></button>
       <button class="menu-item" data-go="flashcard_menu" data-clearstack="1"><span class="num">3.</span><span class="icon">↩️</span><span class="label">Cancel</span></button>
     </div>
   `;
-  return shell("DELETE","",body,{path:`~/study/${slug(subject)}/delete`});
+  return shell("DELETE",topic,body,{path:`~/study/${slug(subject)}/${slug(topic)}/delete`});
 }
 function pageDeleteCardList(){
   const subject=nav.params.subject;
-  const cards=DATA.flashcards[subject]||[];
+  const topic=nav.params.topic;
+  const cards=cardsInTopic(subject,topic);
   if(cards.length===0){
-    return shell("DELETE CARD",subject,emptyState("📭","No cards in this subject.","")+backBtn("flashcard_menu","Back to menu"),{path:`~/study/${slug(subject)}/delete/card`});
+    return shell("DELETE CARDS",topic,emptyState("📭","No cards in this topic.","")+backBtn("flashcard_menu","Back"),{path:`~/study/${slug(subject)}/${slug(topic)}/delete/card`});
   }
   let body=`<div class="menu">`;
-  cards.forEach((card,i)=>{body+=`<button class="menu-item" data-del-card-idx="${i}"><span class="num">${i+1}.</span><span class="label">${esc(card.question)}</span></button>`});
-  body+=`<button class="menu-item" data-back="1"><span class="num">${cards.length+1}.</span><span class="icon">↩️</span><span class="label">Cancel</span></button></div>`;
-  return shell("DELETE CARD",subject,body,{path:`~/study/${slug(subject)}/delete/card`});
+  cards.forEach((card)=>{
+    const realIdx=(DATA.flashcards[subject]||[]).indexOf(card);
+    body+=`<button class="menu-item" data-del-card-idx="${realIdx}"><span class="label">${esc(card.question)}</span></button>`;
+  });
+  body+=`<button class="menu-item" data-back="1"><span class="icon">↩️</span><span class="label">Cancel</span></button></div>`;
+  return shell("DELETE CARD",topic,body,{path:`~/study/${slug(subject)}/${slug(topic)}/delete/card`});
 }
+function pageReadImportCards(){
+  const subject=nav.params.subject;
+  const topic=nav.params.topic;
+  const body=`
+    <div class="card">
+      <div class="qa-text" style="font-size:13.5px;margin-bottom:12px;">Import flashcards from a backup .json file. Every imported card will be tagged with the current topic (<strong style="color:var(--amber);">${esc(topic)}</strong>).</div>
+      <input type="file" id="cardImportInput" accept="application/json,.json" style="display:none;">
+      <button class="btn btn-primary" id="cardImportBtn">Choose file</button>
+    </div>
+    <div id="cardImportPreview"></div>
+    ${backBtn("flashcard_menu","Back")}
+  `;
+  return shell("IMPORT CARDS",topic,body,{path:`~/study/${slug(subject)}/${slug(topic)}/import`});
+}
+function pageReadMenu(){
+  const subject=nav.params.subject;
+  const topic=nav.params.topic;
+  const notes=notesInTopic(subject,topic);
+  let body=`<div class="menu"><button class="menu-item accent" data-go="read_new_choice"><span class="icon">➕</span><span class="label">New Note</span></button>`;
+  if(notes.length===0){
+    body+=`</div>`+emptyState("📭","No notes in this topic.","Write or import your first note.");
+  }else{
+    notes.forEach((n,i)=>{
+      body+=`<button class="menu-item" data-go="read_view" data-note-id="${esc(n.id)}"><span class="num">${i+1}.</span><span class="label">${esc(n.title)}</span><span class="meta">${n.content.length} chars</span></button>`;
+    });
+    body+=`</div>`;
+  }
+  if(notes.length>0){
+    body+=`<div class="menu" style="margin-top:8px;"><button class="menu-item" data-go="read_edit_list"><span class="icon">✏️</span><span class="label">Edit Notes</span></button></div>`;
+  }
+  body+=backBtn("topic_menu","Back to Topic");
+  return shell("READ MODE",topic,body,{path:`~/study/${slug(subject)}/${slug(topic)}/read`});
+}
+function pageReadEditList(){
+  const subject=nav.params.subject;
+  const topic=nav.params.topic;
+  const notes=notesInTopic(subject,topic);
+  if(notes.length===0){
+    return shell("EDIT NOTES",topic,emptyState("📭","No notes to edit.","")+backBtn("read_menu","Back"),{path:`~/study/${slug(subject)}/${slug(topic)}/read/edit`});
+  }
+  let body=`<div class="page-sub" style="margin-top:-6px;">Edit or delete a note</div>`;
+  notes.forEach(n=>{
+    body+=`<div class="note-row"><span class="nr-title">${esc(n.title)}</span><button class="mini-btn" data-edit-note="${esc(n.id)}">✏️</button><button class="mini-btn danger" data-del-note="${esc(n.id)}">🗑️</button></div>`;
+  });
+  body+=backBtn("read_menu","Back");
+  return shell("EDIT NOTES",topic,body,{path:`~/study/${slug(subject)}/${slug(topic)}/read/edit`});
+}
+function pageReadNewChoice(){
+  const subject=nav.params.subject;
+  const topic=nav.params.topic;
+  const body=`
+    <div class="menu">
+      <button class="menu-item accent" data-go="read_write_form"><span class="icon">✍️</span><span class="label">Write New Note</span></button>
+      <button class="menu-item" data-go="read_import"><span class="icon">📥</span><span class="label">Import Notes into Topic</span></button>
+      <button class="menu-item" data-back="1"><span class="icon">↩️</span><span class="label">Cancel</span></button>
+    </div>
+  `;
+  return shell("NEW NOTE",topic,body,{path:`~/study/${slug(subject)}/${slug(topic)}/read/new`});
+}
+function pageReadWriteForm(){
+  const subject=nav.params.subject;
+  const topic=nav.params.topic;
+  const noteId=nav.params.noteId;
+  const note=noteId?getNote(subject,noteId):null;
+  const body=`
+    <label class="field-label">Note title</label>
+    <input type="text" id="noteTitle" placeholder="e.g. Chapter 3 Summary" value="${note?esc(note.title):''}" autofocus>
+    <label class="field-label">Content</label>
+    <textarea id="noteContent" placeholder="Write your notes here..." style="min-height:180px;">${note?esc(note.content):''}</textarea>
+    <div class="btn-row"><button class="btn btn-ghost" data-back="1">Cancel</button><button class="btn btn-primary" id="saveNoteBtn">${note?'Save Changes':'Save Note'}</button></div>
+  `;
+  return shell(note?"EDIT NOTE":"WRITE NOTE",topic,body,{path:`~/study/${slug(subject)}/${slug(topic)}/read/${note?'edit':'new'}`});
+}
+function pageReadImport(){
+  const subject=nav.params.subject;
+  const topic=nav.params.topic;
+  const body=`
+    <div class="card">
+      <div class="qa-text" style="font-size:13.5px;margin-bottom:12px;">Import a .json array of notes or a plain .txt. Every imported note will be tagged with <strong style="color:var(--amber);">${esc(topic)}</strong>.</div>
+      <input type="file" id="noteImportInput" accept="application/json,.json,text/plain,.txt" style="display:none;">
+      <button class="btn btn-primary" id="noteImportBtn">Choose file</button>
+    </div>
+    <div id="noteImportPreview"></div>
+    ${backBtn("read_menu","Back")}
+  `;
+  return shell("IMPORT NOTES",topic,body,{path:`~/study/${slug(subject)}/${slug(topic)}/read/import`});
+}
+function pageReadView(){
+  const subject=nav.params.subject;
+  const topic=nav.params.topic;
+  const noteId=nav.params.noteId;
+  const note=getNote(subject,noteId);
+  if(!note){
+    return shell("READ MODE",topic,emptyState("😕","Note not found.","It may have been deleted.")+backBtn("read_menu","Back"),{path:`~/study/${slug(subject)}/${slug(topic)}/read`});
+  }
+  const playing=ttsState==='playing'&&ttsNoteId===noteId;
+  const paused=ttsState==='paused'&&ttsNoteId===noteId;
+  const ttsBtns=`<div class="tts-controls"><button class="btn btn-primary" id="ttsPlayBtn">${playing?'⏸ Pause':(paused?'▶ Resume':'▶ Play aloud')}</button><button class="btn btn-ghost" id="ttsStopBtn" ${(!playing&&!paused)?'disabled':''}>⏹ Stop</button></div>`;
+  const voices = ('speechSynthesis' in window) ? window.speechSynthesis.getVoices() : [];
+  const voiceOpts = voices.map(v => `<option value="${esc(v.name)}" ${ttsPrefs.voice===v.name?"selected":""}>${esc(v.name)} (${esc(v.lang)})</option>`).join("");
+  const prefsHTML = `
+    <details class="tts-prefs">
+      <summary>Voice settings</summary>
+      <label class="field-label" style="margin-top:8px;">Voice</label>
+      <select class="subj-select" id="ttsVoiceSel">
+        <option value="">System default</option>
+        ${voiceOpts}
+      </select>
+      <label class="field-label">Speed — <span id="ttsRateVal">${ttsPrefs.rate.toFixed(2)}×</span></label>
+      <input type="range" id="ttsRate" min="0.5" max="2" step="0.05" value="${ttsPrefs.rate}">
+      <label class="field-label">Pitch — <span id="ttsPitchVal">${ttsPrefs.pitch.toFixed(2)}</span></label>
+      <input type="range" id="ttsPitch" min="0.5" max="2" step="0.05" value="${ttsPrefs.pitch}">
+    </details>
+  `;
+  const body=`
+    <div class="card"><div class="qa-label" style="color:var(--amber);">${esc(note.title)}</div><div class="note-content">${esc(note.content)}</div></div>
+    ${ttsBtns}
+    ${prefsHTML}
+    <div class="btn-row"><button class="btn btn-ghost" data-go="read_write_form" data-note-id="${esc(note.id)}">✏️ Edit</button><button class="btn btn-danger" id="deleteNoteBtn">🗑️ Delete</button></div>
+    ${backBtn("read_menu","Back")}
+  `;
+  return shell("READ MODE",topic,body,{path:`~/study/${slug(subject)}/${slug(topic)}/read/${slug(note.title)}`});
+}
+
+/* ---- STUDY (topic-scoped) ---- */
 function pageStudySession(){
-  const{subject,order,idx,revealed}=nav.params;
-  const cards=DATA.flashcards[subject]||[];
+  const{subject,topic,order,idx,revealed}=nav.params;
+  const cards=cardsInTopic(subject,topic);
   const total=order?order.length:0;
   if(!total||!order||idx>=total){
-    return shell("STUDYING",subject,emptyState("📭","Nothing to study.","Add flashcards to this subject first.")+backBtn("subject_menu","Back to Subject Menu"),{path:`~/study/${slug(subject)}/study`});
+    return shell("STUDYING",topic,emptyState("📭","Nothing to study.","Add cards to this topic first.")+backBtn("topic_menu","Back to Topic"),{path:`~/study/${slug(subject)}/${slug(topic)}/study`});
   }
   const card=cards[order[idx]];
   if(!card){
-    return shell("STUDYING",subject,emptyState("📭","Card not found.","")+backBtn("subject_menu","Back to Subject Menu"),{path:`~/study/${slug(subject)}/study`});
+    return shell("STUDYING",topic,emptyState("📭","Card not found.","")+backBtn("topic_menu","Back to Topic"),{path:`~/study/${slug(subject)}/${slug(topic)}/study`});
   }
   const pct=((idx+1)/total)*100;
   let qa;
@@ -1036,99 +1725,22 @@ function pageStudySession(){
       <div class="yn-row"><button class="btn btn-danger" data-study-answer="n">✗ No</button><button class="btn btn-primary" data-study-answer="y" style="background:var(--green);border-color:var(--green);">✓ Yes</button></div>`;
   }
   const body=`
-    <div class="progress-line"><span>Card ${idx+1} of ${total}</span><span>${esc(subject)}</span></div>
+    <div class="progress-line"><span>Card ${idx+1} of ${total}</span><span>${esc(topic)}</span></div>
     <div class="bar-track"><div class="bar-fill cyan" style="width:${pct}%;"></div></div>
     ${qa}
   `;
-  return shell("STUDYING",subject.toUpperCase(),body,{path:`~/study/${slug(subject)}/study`});
+  return shell("STUDYING",esc(subject)+" › "+esc(topic),body,{path:`~/study/${slug(subject)}/${slug(topic)}/study`});
 }
 function pageStudyComplete(){
-  const{subject,correct,total}=nav.params;
+  const{subject,topic,correct,total}=nav.params;
   const pct=total>0?(correct/total)*100:0;
   const body=scoreBlock(correct,total,pct)+`
-    <div class="btn-row"><button class="btn btn-ghost" data-go="subject_menu" data-clearstack="1">Subject menu</button><button class="btn btn-primary" data-study-subject="${esc(subject)}" data-clearstack="1">Study again</button></div>
+    <div class="btn-row"><button class="btn btn-ghost" data-go="topic_menu" data-clearstack="1">Topic menu</button><button class="btn btn-primary" data-study-topic="${esc(topic)}" data-clearstack="1">Study again</button></div>
   `;
-  return shell("SESSION COMPLETE!",subject,body,{path:`~/study/${slug(subject)}/study/done`});
+  return shell("SESSION COMPLETE!",topic,body,{path:`~/study/${slug(subject)}/${slug(topic)}/study/done`});
 }
-function pageReadMenu(){
-  const subject=nav.params.subject;
-  const notes=notesFor(subject);
-  let body=`<div class="menu"><button class="menu-item accent" data-go="read_new_choice"><span class="icon">➕</span><span class="label">New Topic</span></button>`;
-  if(notes.length===0){body+=`</div>`+emptyState("📭","No notes yet.","Write or import your first topic.")}
-  else{
-    notes.forEach((n,i)=>{body+=`<button class="menu-item" data-go="read_view" data-note-id="${esc(n.id)}"><span class="num">${i+1}.</span><span class="label">${esc(n.title)}</span><span class="meta">${n.content.length} chars</span></button>`});
-    body+=`</div>`;
-  }
-  if(notes.length>0){body+=`<div class="menu" style="margin-top:8px;"><button class="menu-item" data-go="read_edit_list"><span class="icon">✏️</span><span class="label">Edit Notes</span><span class="meta">edit or delete</span></button></div>`}
-  body+=backBtn("subject_menu","Back to Subject Menu");
-  return shell("READ MODE",subject,body,{path:`~/study/${slug(subject)}/read`});
-}
-function pageReadEditList(){
-  const subject=nav.params.subject;
-  const notes=notesFor(subject);
-  if(notes.length===0){
-    return shell("EDIT NOTES",subject,emptyState("📭","No notes to edit.","Write a topic first.")+backBtn("read_menu","Back to Read Mode"),{path:`~/study/${slug(subject)}/read/edit`});
-  }
-  let body=`<div class="page-sub" style="margin-top:-6px;">Edit or delete an existing topic</div>`;
-  notes.forEach(n=>{body+=`<div class="note-row"><span class="nr-title">${esc(n.title)}</span><button class="mini-btn" data-edit-note="${esc(n.id)}">✏️ Edit</button><button class="mini-btn danger" data-del-note="${esc(n.id)}">🗑️</button></div>`});
-  body+=backBtn("read_menu","Back to Read Mode");
-  return shell("EDIT NOTES",subject,body,{path:`~/study/${slug(subject)}/read/edit`});
-}
-function pageReadNewChoice(){
-  const subject=nav.params.subject;
-  const body=`
-    <div class="menu">
-      <button class="menu-item accent" data-go="read_write_form"><span class="icon">✍️</span><span class="label">Write New Topic</span></button>
-      <button class="menu-item" data-go="read_import"><span class="icon">📥</span><span class="label">Import from File</span></button>
-      <button class="menu-item" data-back="1"><span class="icon">↩️</span><span class="label">Cancel</span></button>
-    </div>
-  `;
-  return shell("NEW TOPIC",subject,body,{path:`~/study/${slug(subject)}/read/new`});
-}
-function pageReadWriteForm(){
-  const subject=nav.params.subject;
-  const noteId=nav.params.noteId;
-  const note=noteId?getNote(subject,noteId):null;
-  const body=`
-    <label class="field-label">Topic title</label>
-    <input type="text" id="noteTitle" placeholder="e.g. Chapter 3 Summary" value="${note?esc(note.title):''}" autofocus>
-    <label class="field-label">Notes</label>
-    <textarea id="noteContent" placeholder="Write your notes here..." style="min-height:180px;">${note?esc(note.content):''}</textarea>
-    <div class="btn-row"><button class="btn btn-ghost" data-back="1">Cancel</button><button class="btn btn-primary" id="saveNoteBtn">${note?'Save Changes':'Save Topic'}</button></div>
-  `;
-  return shell(note?"EDIT TOPIC":"WRITE TOPIC",subject,body,{path:`~/study/${slug(subject)}/read/${note?'edit':'new'}`});
-}
-function pageReadImport(){
-  const subject=nav.params.subject;
-  const body=`
-    <div class="card">
-      <div class="qa-text" style="font-size:13.5px;margin-bottom:12px;">Import a .json backup of one or more topics, or a plain .txt file (its filename becomes the title).</div>
-      <input type="file" id="noteImportInput" accept="application/json,.json,text/plain,.txt" style="display:none;">
-      <button class="btn btn-primary" id="noteImportBtn">Choose file</button>
-    </div>
-    <div id="noteImportPreview"></div>
-    ${backBtn("read_menu","Back to Read Mode")}
-  `;
-  return shell("IMPORT TOPIC",subject,body,{path:`~/study/${slug(subject)}/read/import`});
-}
-function pageReadView(){
-  const subject=nav.params.subject;
-  const noteId=nav.params.noteId;
-  const note=getNote(subject,noteId);
-  if(!note){
-    return shell("READ MODE",subject,emptyState("😕","Topic not found.","It may have been deleted.")+backBtn("read_menu","Back"),{path:`~/study/${slug(subject)}/read`});
-  }
-  const playing=ttsState==='playing'&&ttsNoteId===noteId;
-  const paused=ttsState==='paused'&&ttsNoteId===noteId;
-  const ttsBtns=`<div class="tts-controls"><button class="btn btn-primary" id="ttsPlayBtn">${playing?'⏸ Pause':(paused?'▶ Resume':'▶ Play aloud')}</button><button class="btn btn-ghost" id="ttsStopBtn" ${(!playing&&!paused)?'disabled':''}>⏹ Stop</button></div>`;
-  const body=`
-    <div class="card"><div class="qa-label" style="color:var(--amber);">${esc(note.title)}</div><div class="note-content">${esc(note.content)}</div></div>
-    ${ttsBtns}
-    <div class="btn-row"><button class="btn btn-ghost" data-go="read_write_form" data-note-id="${esc(note.id)}">✏️ Edit</button><button class="btn btn-danger" id="deleteNoteBtn">🗑️ Delete</button></div>
-    ${backBtn("read_menu","Back to Topics")}
-  `;
-  return shell("READ MODE",subject,body,{path:`~/study/${slug(subject)}/read/${slug(note.title)}`});
-}
+
+/* ---- QUIZ (topic-scoped + MCQ mode) ---- */
 function quizTimerOptsHTML(mode){
   if(mode==='perq')return `<label class="field-label">Seconds per question</label><input type="number" id="quizPerQSeconds" min="5" max="600" value="30">`;
   if(mode==='whole')return `<label class="field-label">Minutes for the whole quiz</label><input type="number" id="quizWholeMinutes" min="1" max="180" value="5">`;
@@ -1136,11 +1748,18 @@ function quizTimerOptsHTML(mode){
 }
 function pageQuizSettings(){
   const subject=nav.params.subject;
-  const maxQ=Math.min(10,cardCount(subject));
+  const topic=nav.params.topic;
+  const topicCards=cardsInTopic(subject,topic);
+  const maxQ=Math.min(10,topicCards.length);
   const body=`
-    <div class="page-sub" style="margin-top:-6px;">Subject: <strong style="color:var(--amber);">${esc(subject)}</strong></div>
+    <div class="page-sub" style="margin-top:-6px;">Topic: <strong style="color:var(--amber);">${esc(topic)}</strong> · ${topicCards.length} cards</div>
     <label class="field-label">Number of questions (1–${maxQ})</label>
     <input type="number" id="numQuestions" min="1" max="${maxQ}" value="${maxQ}">
+    <label class="field-label">Answer mode</label>
+    <select class="subj-select" id="quizAnswerMode">
+      <option value="typed">Type the answer</option>
+      <option value="mcq">Multiple choice</option>
+    </select>
     <label class="field-label">Time limit</label>
     <select class="subj-select" id="quizTimerMode">
       <option value="none">No time limit</option>
@@ -1150,13 +1769,13 @@ function pageQuizSettings(){
     <div id="quizTimerOpts"></div>
     <div class="btn-row"><button class="btn btn-ghost" data-back="1">Cancel</button><button class="btn btn-primary" id="startQuizBtn">Start Quiz</button></div>
   `;
-  return shell("QUIZ SETUP","",body,{path:`~/study/${slug(subject)}/quiz/setup`});
+  return shell("QUIZ SETUP","",body,{path:`~/study/${slug(subject)}/${slug(topic)}/quiz/setup`});
 }
 function pageQuizSession(){
   const p=nav.params;
-  const{subject,order,idx,userAnswer,checked,result}=p;
+  const{subject,topic,order,idx,userAnswer,checked,result}=p;
   if(!order||idx>=order.length){
-    return shell("QUIZ",subject,emptyState("😕","Session lost.","Start the quiz again.")+backBtn("subject_menu","Back"),{path:`~/study/${slug(subject)}/quiz`});
+    return shell("QUIZ",topic,emptyState("😕","Session lost.","Start again.")+backBtn("topic_menu","Back"),{path:`~/study/${slug(subject)}/${slug(topic)}/quiz`});
   }
   const total=order.length;
   const card=order[idx];
@@ -1169,41 +1788,51 @@ function pageQuizSession(){
   }
   let inner;
   if(!checked){
-    inner=`<div class="card"><div class="qa-label q">❓ Question</div><div class="qa-text">${esc(card.question)}</div></div>
-      <label class="field-label">Your answer</label>
-      <input type="text" id="quizAnswerInput" placeholder="Type your answer..." autofocus value="${esc(userAnswer||"")}">
-      <button class="btn btn-primary" id="submitAnswerBtn">Submit</button>`;
+    if(p.answerMode==='mcq'){
+      inner=`<div class="card"><div class="qa-label q">❓ Question</div><div class="qa-text">${esc(card.question)}</div></div>`;
+      (p.choices||[]).forEach((c,i)=>{
+        inner+=`<button class="btn btn-ghost" data-mcq-choice="${i}" style="text-align:left;justify-content:flex-start;margin-bottom:8px;">${String.fromCharCode(65+i)}. ${esc(c)}</button>`;
+      });
+    }else{
+      inner=`<div class="card"><div class="qa-label q">❓ Question</div><div class="qa-text">${esc(card.question)}</div></div>
+        <label class="field-label">Your answer</label>
+        <input type="text" id="quizAnswerInput" placeholder="Type your answer..." autofocus value="${esc(userAnswer||"")}">
+        <button class="btn btn-primary" id="submitAnswerBtn">Submit</button>`;
+    }
   }else{
     let rb;
     if(result==="correct"){
       rb=`<div class="card" style="border-color:#1f4d3a;"><div class="qa-label" style="color:var(--green);">✅ Correct!</div></div>`;
+      if(p.answerMode==='mcq')rb+=`<button class="btn btn-primary" id="nextQuestionBtn">Next</button>`;
     }else if(result==="close"){
       rb=`<div class="card" style="border-color:#5a4a1f;"><div class="qa-label" style="color:var(--amber);">🟡 Close! Expected:</div><div class="qa-text">${esc(card.answer)}</div>${userAnswer?`<hr class="div" style="margin:10px 0;"><div class="qa-label" style="color:var(--grey);">You wrote:</div><div class="qa-text" style="font-size:13.5px;color:var(--grey);">${esc(userAnswer)}</div>`:''}</div>
         <div class="page-sub" style="margin-bottom:8px;">Count as correct?</div>
         <div class="yn-row"><button class="btn btn-danger" data-quiz-override="n">✗ No</button><button class="btn btn-primary" data-quiz-override="y" style="background:var(--green);border-color:var(--green);">✓ Yes</button></div>`;
     }else{
-      rb=`<div class="card" style="border-color:#5a2424;"><div class="qa-label" style="color:var(--red);">❌ ${p.timedOut?"Time's up!":"Wrong."} Correct answer:</div><div class="qa-text">${esc(card.answer)}</div>${userAnswer?`<hr class="div" style="margin:10px 0;"><div class="qa-label" style="color:var(--grey);">You wrote:</div><div class="qa-text" style="font-size:13.5px;color:var(--grey);">${esc(userAnswer)}</div>`:''}</div>
+      rb=`<div class="card" style="border-color:#5a2424;"><div class="qa-label" style="color:var(--red);">❌ ${p.timedOut?"Time's up!":"Wrong."} Correct answer:</div><div class="qa-text">${esc(card.answer)}</div>${userAnswer?`<hr class="div" style="margin:10px 0;"><div class="qa-label" style="color:var(--grey);">You chose:</div><div class="qa-text" style="font-size:13.5px;color:var(--grey);">${esc(userAnswer)}</div>`:''}</div>
         <button class="btn btn-primary" id="nextQuestionBtn">Next</button>`;
     }
     inner=rb;
   }
   const body=`
-    <div class="progress-line"><span>Question ${idx+1} of ${total}</span><span>${esc(subject)}</span></div>
+    <div class="progress-line"><span>Question ${idx+1} of ${total}</span><span>${esc(topic)}</span></div>
     <div class="bar-track"><div class="bar-fill magenta" style="width:${pct}%;"></div></div>
     ${timerHTML}
     ${inner}
   `;
-  return shell("QUIZ",subject.toUpperCase(),body,{path:`~/study/${slug(subject)}/quiz`});
+  return shell("QUIZ",esc(subject)+" › "+esc(topic),body,{path:`~/study/${slug(subject)}/${slug(topic)}/quiz`});
 }
 function pageQuizComplete(){
-  const{subject,score,total,timeUp}=nav.params;
+  const{subject,topic,score,total,timeUp}=nav.params;
   const pct=total>0?(score/total)*100:0;
   const timeUpCard=timeUp?`<div class="card" style="border-color:#5a4a1f;text-align:center;"><div class="qa-label" style="color:var(--amber);justify-content:center;">⏰ Time's up!</div><div class="qa-text" style="font-size:13.5px;">The quiz ended early — unanswered questions counted as wrong.</div></div>`:'';
   const body=timeUpCard+scoreBlock(score,total,pct)+`
-    <div class="btn-row"><button class="btn btn-ghost" data-go="subject_menu" data-clearstack="1">Subject menu</button><button class="btn btn-primary" data-quiz-subject="${esc(subject)}" data-clearstack="1">Quiz again</button></div>
+    <div class="btn-row"><button class="btn btn-ghost" data-go="topic_menu" data-clearstack="1">Topic menu</button><button class="btn btn-primary" data-quiz-topic="${esc(topic)}" data-clearstack="1">Quiz again</button></div>
   `;
-  return shell("QUIZ COMPLETE!",subject,body,{path:`~/study/${slug(subject)}/quiz/done`});
+  return shell("QUIZ COMPLETE!",topic,body,{path:`~/study/${slug(subject)}/${slug(topic)}/quiz/done`});
 }
+
+/* ---- TIMER ---- */
 function pageTimer(){
   const runningNote=TIMER.active?`<div class="page-sub">A timer is already running (${fmtMMSS(timerRemaining())} left${TIMER.paused?' · paused':''}). Starting a new one replaces it.</div>`:"";
   const body=`
@@ -1243,6 +1872,8 @@ function pageTimerActive(){
   `;
   return shell(done?"TIME'S UP!":(paused?"TIMER PAUSED":"TIMER ACTIVE"),"",body,{path:"~/study/timer/active"});
 }
+
+/* ---- PROGRESS ---- */
 function pageProgress(){
   const sessions=DATA.study_sessions;
   if(sessions.length===0){
@@ -1253,7 +1884,11 @@ function pageProgress(){
   const totalCorrect=sessions.reduce((s,x)=>s+(x.correct_answers||0),0);
   const avg=sessions.reduce((s,x)=>s+x.score,0)/totalSessions;
   const bySub={};
-  sessions.forEach(s=>{if(!bySub[s.subject])bySub[s.subject]={count:0,total:0};bySub[s.subject].count++;bySub[s.subject].total+=s.score});
+  sessions.forEach(s=>{
+    if(!bySub[s.subject])bySub[s.subject]={count:0,total:0};
+    bySub[s.subject].count++;
+    bySub[s.subject].total+=s.score;
+  });
   const subjRows=Object.keys(bySub).map(sub=>{
     const st=bySub[sub];const a=st.total/st.count;
     const col=a>=80?"var(--green)":a>=60?"var(--amber)":"var(--red)";
@@ -1262,37 +1897,59 @@ function pageProgress(){
   const last5=sessions.slice(-5).reverse();
   const rows=last5.map(s=>{
     const col=s.score>=80?"var(--green)":s.score>=60?"var(--amber)":"var(--red)";
-    return `<div class="session-row"><span class="sr-date">${fmtDate(s.date)}</span><span class="sr-subj">${esc(s.subject)}${s.type==='quiz'?' 🎯':''}</span><span class="sr-score" style="color:${col};">${s.score.toFixed(0)}%</span><span class="sr-cards">${s.cards_studied} cards</span></div>`;
+    return `<div class="session-row"><span class="sr-date">${fmtDate(s.date)}</span><span class="sr-subj">${esc(s.subject)}${s.topic?' › '+esc(s.topic):''}${s.type==='quiz'?' 🎯':''}</span><span class="sr-score" style="color:${col};">${s.score.toFixed(0)}%</span><span class="sr-cards">${s.cards_studied} cards</span></div>`;
   }).join("");
+  const goal=getDailyGoal();
+  const today=todayCardsStudied();
+  const goalPct=Math.min(100,Math.round((today/goal)*100));
+  const streak=currentStreak();
+  const best=bestStreak();
+  const chart=barChartHTML(last14Days(),goal);
   const body=`
     <div class="stat-grid">
-      <div class="stat-box"><div class="stat-val">${totalSessions}</div><div class="stat-label">Sessions completed</div></div>
-      <div class="stat-box"><div class="stat-val">${totalCards}</div><div class="stat-label">Cards studied</div></div>
-      <div class="stat-box"><div class="stat-val">${totalCorrect}</div><div class="stat-label">Correct answers</div></div>
+      <div class="stat-box"><div class="stat-val">${streak}🔥</div><div class="stat-label">Current streak (days)</div></div>
+      <div class="stat-box"><div class="stat-val">${best}</div><div class="stat-label">Best streak</div></div>
+      <div class="stat-box"><div class="stat-val">${today}/${goal}</div><div class="stat-label">Cards today</div></div>
       <div class="stat-box"><div class="stat-val">${avg.toFixed(1)}%</div><div class="stat-label">Average score</div></div>
     </div>
+    <div class="progress-line"><span>Today's goal</span><span>${goalPct}%</span></div>
+    <div class="bar-track"><div class="bar-fill ${goalPct>=100?'green':'cyan'}" style="width:${goalPct}%;"></div></div>
+    <div class="qa-label" style="color:var(--amber);margin:14px 0 6px;">📅 Last 14 days</div>
+    ${chart}
     <hr class="div">
     <div class="qa-label" style="color:var(--amber);margin-bottom:10px;">📚 By subject</div>
     ${subjRows}
     <hr class="div">
     <div class="qa-label" style="color:var(--amber);margin-bottom:10px;">🕐 Last 5 sessions</div>
     ${rows}
+    <div class="btn-row"><button class="btn btn-ghost" data-go="progress_history">📜 Full history</button><button class="btn btn-ghost" data-go="goals_settings">🎯 Edit goal</button></div>
     ${backBtn("home","Back to menu")}
   `;
   return shell("STUDY PROGRESS (ALL)","",body,{path:"~/study/progress"});
 }
-function pageSubjectProgress(){
+function pageGoalsSettings(){
+  const goal=getDailyGoal();
+  const body=`
+    <div class="page-sub" style="margin-top:-6px;">Cards you need to study per day to keep your streak alive.</div>
+    <label class="field-label">Daily cards goal</label>
+    <input type="number" id="dailyGoalInput" min="1" max="500" value="${goal}">
+    <div class="btn-row"><button class="btn btn-ghost" data-back="1">Cancel</button><button class="btn btn-primary" id="saveGoalBtn">Save goal</button></div>
+  `;
+  return shell("DAILY GOAL","",body,{path:"~/study/progress/goal"});
+}
+function pageTopicProgress(){
   const subject=nav.params.subject;
-  const sessions=DATA.study_sessions.filter(s=>s.subject===subject);
+  const topic=nav.params.topic;
+  const sessions=topicSessions(subject,topic);
   if(sessions.length===0){
-    return shell("PROGRESS",subject,emptyState("📭","No sessions yet.","Study or quiz this subject to see stats here!")+backBtn("subject_menu","Back to Subject Menu"),{path:`~/study/${slug(subject)}/progress`});
+    return shell("PROGRESS",topic,emptyState("📭","No sessions for this topic yet.","Study or quiz this topic to see stats.")+backBtn("topic_menu","Back to Topic"),{path:`~/study/${slug(subject)}/${slug(topic)}/progress`});
   }
   const totalSessions=sessions.length;
   const totalCards=sessions.reduce((s,x)=>s+x.cards_studied,0);
   const totalCorrect=sessions.reduce((s,x)=>s+(x.correct_answers||0),0);
   const avg=sessions.reduce((s,x)=>s+x.score,0)/totalSessions;
-  const last5=sessions.slice(-5).reverse();
-  const rows=last5.map(s=>{
+  const last10=sessions.slice(-10).reverse();
+  const rows=last10.map(s=>{
     const col=s.score>=80?"var(--green)":s.score>=60?"var(--amber)":"var(--red)";
     return `<div class="session-row"><span class="sr-date">${fmtDate(s.date)}</span><span class="sr-subj">${s.type==='quiz'?'Quiz':'Study'}</span><span class="sr-score" style="color:${col};">${s.score.toFixed(0)}%</span><span class="sr-cards">${s.cards_studied} cards</span></div>`;
   }).join("");
@@ -1300,28 +1957,64 @@ function pageSubjectProgress(){
     <div class="stat-grid">
       <div class="stat-box"><div class="stat-val">${totalSessions}</div><div class="stat-label">Sessions</div></div>
       <div class="stat-box"><div class="stat-val">${totalCards}</div><div class="stat-label">Cards studied</div></div>
-      <div class="stat-box"><div class="stat-val">${totalCorrect}</div><div class="stat-label">Correct answers</div></div>
-      <div class="stat-box"><div class="stat-val">${avg.toFixed(1)}%</div><div class="stat-label">Average score</div></div>
+      <div class="stat-box"><div class="stat-val">${totalCorrect}</div><div class="stat-label">Correct</div></div>
+      <div class="stat-box"><div class="stat-val">${avg.toFixed(1)}%</div><div class="stat-label">Average</div></div>
     </div>
     <hr class="div">
     <div class="qa-label" style="color:var(--amber);margin-bottom:10px;">🕐 Recent sessions</div>
     ${rows}
-    ${backBtn("subject_menu","Back to Subject Menu")}
+    ${backBtn("topic_menu","Back to Topic")}
   `;
-  return shell("PROGRESS",subject,body,{path:`~/study/${slug(subject)}/progress`});
+  return shell("PROGRESS",esc(subject)+" › "+esc(topic),body,{path:`~/study/${slug(subject)}/${slug(topic)}/progress`});
 }
+function pageFullHistory(){
+  const all=DATA.study_sessions;
+  if(!all.length){
+    return shell("FULL HISTORY","",emptyState("📭","No sessions recorded.","Study or take a quiz to start.")+backBtn("progress","Back to Progress"),{path:"~/study/progress/history"});
+  }
+  const filtered=historyFilter==="all"?all:all.filter(s=>s.subject===historyFilter);
+  const subjectsInHistory=[...new Set(all.map(s=>s.subject))];
+  let body=`
+    <div class="admin-filter" style="margin-bottom:12px;">
+      <button class="mini-btn ${historyFilter==='all'?'active':''}" data-hfilter="all">All (${all.length})</button>
+      ${subjectsInHistory.slice(0,4).map(s=>`<button class="mini-btn ${historyFilter===s?'active':''}" data-hfilter="${esc(s)}">${esc(s.length>12?s.slice(0,12)+'…':s)} (${all.filter(x=>x.subject===s).length})</button>`).join("")}
+    </div>
+  `;
+  if(!filtered.length){
+    body+=emptyState("🔍","No sessions match.","Try a different filter.");
+  }else{
+    const rows=[...filtered].reverse().map(s=>{
+      const col=s.score>=80?"var(--green)":s.score>=60?"var(--amber)":"var(--red)";
+      const typeIcon=s.type==='quiz'?'🎯':'📖';
+      const topicStr=s.topic?' › '+esc(s.topic):'';
+      return `<div class="session-row"><span class="sr-date">${fmtDate(s.date)}</span><span class="sr-subj">${typeIcon} ${esc(s.subject)}${topicStr}</span><span class="sr-score" style="color:${col};">${s.score.toFixed(0)}%</span><span class="sr-cards">${s.cards_studied} cards</span></div>`;
+    }).join("");
+    body+=`<div class="card" style="max-height:none;">${rows}</div>`;
+  }
+  body+=`
+    <hr class="div">
+    <div class="btn-row">
+      <button class="btn btn-ghost" id="exportHistoryBtn">📤 Export</button>
+      <button class="btn btn-danger" id="clearHistoryBtn">🗑 Clear all</button>
+    </div>
+    ${backBtn("progress","Back to Progress")}
+  `;
+  return shell("FULL HISTORY",`${filtered.length} session${filtered.length===1?'':'s'}`,body,{path:"~/study/progress/history"});
+}
+
+/* ---- SYNC / SETTINGS ---- */
 function pageSyncData(){
   const subs=subjects();
   const opts=subs.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("");
   const body=`
     <div class="card">
       <div class="qa-label" style="color:var(--cyan);">📤 Full Export</div>
-      <div class="qa-text" style="font-size:13.5px;margin-bottom:12px;">Everything — every subject, flashcard, note, and your full session history.</div>
+      <div class="qa-text" style="font-size:13.5px;margin-bottom:12px;">Everything — subjects, topics, flashcards, notes, and session history.</div>
       <button class="btn btn-primary" id="exportFullBtn">Download full backup</button>
     </div>
     <div class="card">
-      <div class="qa-label" style="color:var(--cyan);">📤 Export (No Saved Data)</div>
-      <div class="qa-text" style="font-size:13.5px;margin-bottom:12px;">All subjects, flashcards, and notes, but no review history or session stats — good for sharing a clean set.</div>
+      <div class="qa-label" style="color:var(--cyan);">📤 Export (No Data)</div>
+      <div class="qa-text" style="font-size:13.5px;margin-bottom:12px;">Subjects, topics, cards, and notes — no review history or session stats.</div>
       <button class="btn btn-primary" id="exportNoDataBtn">Download clean export</button>
     </div>
     <div class="card">
@@ -1329,12 +2022,12 @@ function pageSyncData(){
       ${subs.length===0?`<div class="qa-text" style="font-size:13.5px;">No subjects yet.</div>`:`
       <label class="field-label">Subject</label>
       <select class="subj-select" id="exportSubjectSelect">${opts}</select>
-      <label class="check-row"><input type="checkbox" id="exportSubjectIncludeData" checked> Include review history &amp; session data</label>
-      <button class="btn btn-primary" id="exportSubjectBtn">Download subject export</button>`}
+      <label class="check-row"><input type="checkbox" id="exportSubjectIncludeData" checked> Include review history &amp; sessions</label>
+      <button class="btn btn-primary" id="exportSubjectBtn">Download subject</button>`}
     </div>
     <div class="card">
-      <div class="qa-label" style="color:var(--green);">📥 Import</div>
-      <div class="qa-text" style="font-size:13.5px;margin-bottom:12px;">Load any backup file (full, no-data, or single-subject). This only adds what's missing — anything already here stays exactly as it is.</div>
+      <div class="qa-label" style="color:var(--green);">📥 Import Backup</div>
+      <div class="qa-text" style="font-size:13.5px;margin-bottom:12px;">Load any backup file. Merges non-destructively.</div>
       <input type="file" id="importFileInput" accept="application/json,.json" style="display:none;">
       <button class="btn btn-primary" id="importDataBtn" style="background:var(--green);border-color:var(--green);">Choose backup file</button>
     </div>
@@ -1345,7 +2038,7 @@ function pageSyncData(){
 }
 function pageSettings(){
   const wmStatus=WM_ENABLED?"on":"off";
-  const mobileNote=WM_ENABLED&&window.innerWidth<700?`<div class="page-sub" style="margin-top:10px;color:var(--grey-dim);">Windowed mode is PC-only — it won't activate on small screens.</div>`:"";
+  const mobileNote=WM_ENABLED&&window.innerWidth<700?`<div class="page-sub" style="margin-top:10px;color:var(--grey-dim);">Windowed mode is PC-only.</div>`:"";
   const u=currentUserDoc||{};
   const exp=u.expiresAt?(u.expiresAt.toDate?u.expiresAt.toDate():new Date(u.expiresAt)):null;
   const expStr=isAdmin()?"— (admin)":(exp?exp.toLocaleDateString():"—");
@@ -1362,16 +2055,23 @@ function pageSettings(){
   `;
   const adminBlock=isAdmin()?`
     <div class="menu" style="margin-bottom:14px;">
-      <button class="menu-item accent" data-go="admin_panel"><span class="icon">🛡️</span><span class="label">Open Admin Panel</span><span class="meta">manage users</span></button>
+      <button class="menu-item accent" data-go="admin_panel"><span class="icon">🛡️</span><span class="label">Open Admin Panel</span></button>
     </div>
   `:"";
   const body=`
-       ${accountBlock}
+    ${accountBlock}
     <div class="card">
       <div class="qa-label" style="color:var(--cyan);">☁️ Cloud Sync</div>
       <div class="auth-info-row"><span>Status</span><span class="val" id="syncStatus">—</span></div>
       <div class="auth-info-row"><span>Pending</span><span class="val" id="syncPending">—</span></div>
       <button class="btn btn-primary" id="syncNowBtn" style="margin-top:12px;">🔄 Sync now</button>
+    </div>
+    <div class="card">
+      <div class="qa-label" style="color:var(--amber);">💡 Send a Suggestion</div>
+      <div class="qa-text" style="font-size:12.5px;margin-bottom:10px;">Ideas, bugs, features? D4N will see it in the admin panel.</div>
+      <textarea id="suggestionText" placeholder="Your suggestion..." style="min-height:80px;"></textarea>
+      <button class="btn btn-primary" id="submitSuggestionBtn">Send suggestion</button>
+      <div id="suggestionStatus" style="font-size:12px;text-align:center;margin-top:8px;min-height:16px;"></div>
     </div>
     ${adminBlock}
     <div class="wm-toggle">
@@ -1384,25 +2084,27 @@ function pageSettings(){
     ${mobileNote}
     <div class="card" style="margin-top:16px;">
       <div class="qa-label" style="color:var(--amber);">📄 Example Files</div>
-      <div class="qa-text" style="font-size:13.5px;margin-bottom:12px;">Don't want to write your own note or flashcard? Download an example export to make your notes using AI.</div>
+      <div class="qa-text" style="font-size:13.5px;margin-bottom:12px;">Download examples to use with AI.</div>
       <div class="btn-row" style="margin-top:0;">
-        <button class="btn btn-ghost" id="exampleNotesBtn">📝 Notes export example</button>
-        <button class="btn btn-ghost" id="exampleBackupBtn">🗂 flashcard export example</button>
+        <button class="btn btn-ghost" id="exampleNotesBtn">📝 Notes</button>
+        <button class="btn btn-ghost" id="exampleBackupBtn">🗂 Backup</button>
       </div>
     </div>
     <div class="menu" style="margin-top:8px;">
-      <button class="menu-item danger" id="wipeDataBtn"><span class="icon">🗑️</span><span class="label">Delete All Saved Data</span><span class="meta">permanent</span></button>
+      <button class="menu-item danger" id="wipeDataBtn"><span class="icon">🗑️</span><span class="label">Delete All Saved Data</span></button>
       <button class="menu-item" data-go="home" data-clearstack="1"><span class="icon">↩️</span><span class="label">Back to Main Menu</span></button>
     </div>
     <div class="page-sub" style="margin-top:16px;">(LEAVE BLANK)</div>
-    <div class="page-sub" style="margin-top:2px;color:var(--grey-dim);font-size:10.5px;">V4.8.1-pwa</div>
+    <div class="page-sub" style="margin-top:2px;color:var(--grey-dim);font-size:10.5px;">V5.0.0-topics</div>
   `;
   return shell("SETTINGS","",body,{path:"~/study/settings"});
 }
 
-/* ========== ADMIN PANEL ========== */
+/* ---- ADMIN PANEL ---- */
 let adminUsersCache=null;
 let adminFilterMode="all";
+let adminSuggestionsCache=null;
+let adminTab="users";
 
 async function fetchAdminUsers(){
   const col=collection(db,"users");
@@ -1420,121 +2122,130 @@ function userStatus(u){
   }
   return"pending";
 }
-function userPlan(u){
-  return u.plan === "term" ? "term" : (u.plan === "monthly" ? "monthly" : null);
-}
-function planLabel(u){
-  const p=userPlan(u);
-  if(p==="term")return "📚 Term";
-  if(p==="monthly")return "📅 Monthly";
-  return "—";
-}
+function userPlan(u){return u.plan==="term"?"term":(u.plan==="monthly"?"monthly":null)}
+function planLabel(u){const p=userPlan(u);if(p==="term")return "📚 Term";if(p==="monthly")return "📅 Monthly";return "—"}
 function pageAdminPanel(){
   if(!isAdmin()){
-    return shell("ADMIN","",emptyState("🚫","Not authorized.","This area is only for the owner.")+backBtn("home","Back to menu"),{path:"~/study/admin"});
+    return shell("ADMIN","",emptyState("🚫","Not authorized.","")+backBtn("home","Back"),{path:"~/study/admin"});
   }
   const users=adminUsersCache;
-
+  const sugs=adminSuggestionsCache;
+  const unread=sugs?sugs.filter(s=>!s.read).length:0;
   let body=`
-    <div class="page-sub" style="margin-top:-6px;">Approve, revoke, or extend access for students.</div>
-
-    <div class="card">
-      <div class="qa-label" style="color:var(--cyan);">⚙️ Plan Defaults</div>
-      <div class="qa-text" style="font-size:12px;margin-bottom:10px;">Days granted when you approve or extend someone. Change these any time.</div>
-      <label class="field-label">📅 Monthly plan — days</label>
-      <input type="number" id="cfgMonthlyDays" min="1" max="3650" value="${planConfig.monthlyDays}">
-      <label class="field-label">📚 Term plan — days</label>
-      <input type="number" id="cfgTermDays" min="1" max="3650" value="${planConfig.termDays}">
-      <button class="btn btn-primary" id="savePlanCfgBtn">Save defaults</button>
+    <div class="admin-filter" style="margin-bottom:12px;">
+      <button class="mini-btn ${adminTab==='users'?'active':''}" data-atab="users">👥 Users</button>
+      <button class="mini-btn ${adminTab==='suggestions'?'active':''}" data-atab="suggestions">💡 Suggestions${unread?` (${unread})`:''}</button>
     </div>
-
-    <div class="admin-filter" id="adminFilter">
-      <button class="mini-btn ${adminFilterMode==='all'?'active':''}" data-afilter="all">All</button>
-      <button class="mini-btn ${adminFilterMode==='pending'?'active':''}" data-afilter="pending">⏳ Pending</button>
-      <button class="mini-btn ${adminFilterMode==='approved'?'active':''}" data-afilter="approved">✓ Active</button>
-      <button class="mini-btn ${adminFilterMode==='expired'?'active':''}" data-afilter="expired">⏰ Expired</button>
-      <button class="mini-btn ${adminFilterMode==='monthly'?'active':''}" data-afilter="monthly">📅 Monthly</button>
-      <button class="mini-btn ${adminFilterMode==='term'?'active':''}" data-afilter="term">📚 Term</button>
-    </div>
-    <button class="btn btn-ghost" id="adminRefreshBtn" style="margin-bottom:12px;">🔄 Refresh</button>
   `;
-
-  if(!users){
-    body+=`<div class="spinner" style="margin:20px auto;"></div><div class="auth-loading">Loading users…</div>`;
-  }else{
-    const filtered=users.filter(u=>{
-      if(u.uid===ADMIN_UID)return false;
-      if(adminFilterMode==='all')return true;
-      if(adminFilterMode==='monthly')return userPlan(u)==='monthly';
-      if(adminFilterMode==='term')return userPlan(u)==='term';
-      return userStatus(u)===adminFilterMode;
-    });
-    if(filtered.length===0){
-      body+=emptyState("📭","No users here.","Try a different filter, or wait for signups.");
+  if(adminTab==="users"){
+    body+=`
+      <div class="card">
+        <div class="qa-label" style="color:var(--cyan);">⚙️ Plan Defaults</div>
+        <label class="field-label">📅 Monthly plan — days</label>
+        <input type="number" id="cfgMonthlyDays" min="1" max="3650" value="${planConfig.monthlyDays}">
+        <label class="field-label">📚 Term plan — days</label>
+        <input type="number" id="cfgTermDays" min="1" max="3650" value="${planConfig.termDays}">
+        <button class="btn btn-primary" id="savePlanCfgBtn">Save defaults</button>
+      </div>
+      <div class="admin-filter" id="adminFilter">
+        <button class="mini-btn ${adminFilterMode==='all'?'active':''}" data-afilter="all">All</button>
+        <button class="mini-btn ${adminFilterMode==='pending'?'active':''}" data-afilter="pending">⏳ Pending</button>
+        <button class="mini-btn ${adminFilterMode==='approved'?'active':''}" data-afilter="approved">✓ Active</button>
+        <button class="mini-btn ${adminFilterMode==='expired'?'active':''}" data-afilter="expired">⏰ Expired</button>
+        <button class="mini-btn ${adminFilterMode==='monthly'?'active':''}" data-afilter="monthly">📅 M</button>
+        <button class="mini-btn ${adminFilterMode==='term'?'active':''}" data-afilter="term">📚 T</button>
+      </div>
+      <button class="btn btn-ghost" id="adminRefreshBtn" style="margin-bottom:12px;">🔄 Refresh</button>
+    `;
+    if(!users){
+      body+=`<div class="spinner" style="margin:20px auto;"></div><div class="auth-loading">Loading users…</div>`;
     }else{
-      // Split into two groups
-      const pending=filtered.filter(u=>userStatus(u)!=='approved');
-      const active=filtered.filter(u=>userStatus(u)==='approved');
-
-      const renderRow=(u)=>{
-        const st=userStatus(u);
-        const exp=u.expiresAt?(u.expiresAt.toDate?u.expiresAt.toDate():new Date(u.expiresAt)):null;
-        const expStr=exp?exp.toLocaleDateString():"—";
-        const created=u.createdAt?(u.createdAt.toDate?u.createdAt.toDate():new Date(u.createdAt)):null;
-        const createdStr=created?created.toLocaleDateString():"—";
-        let actions='';
-        if(st==='pending'){
-          actions=`<button class="mini-btn green" data-admin-action="approve" data-plan="monthly" data-uid="${u.uid}">✓ Monthly (${planConfig.monthlyDays}d)</button>
-            <button class="mini-btn green" data-admin-action="approve" data-plan="term" data-uid="${u.uid}">✓ Term (${planConfig.termDays}d)</button>
-            <button class="mini-btn danger" data-admin-action="delete" data-uid="${u.uid}">🗑</button>`;
-        }else if(st==='approved'){
-          actions=`<button class="mini-btn amber" data-admin-action="extend" data-plan="monthly" data-uid="${u.uid}">+${planConfig.monthlyDays}d 📅</button>
-            <button class="mini-btn amber" data-admin-action="extend" data-plan="term" data-uid="${u.uid}">+${planConfig.termDays}d 📚</button>
-            <button class="mini-btn danger" data-admin-action="revoke" data-uid="${u.uid}">✗ Revoke</button>
-            <button class="mini-btn danger" data-admin-action="delete" data-uid="${u.uid}">🗑</button>`;
-        }else{
-          actions=`<button class="mini-btn green" data-admin-action="approve" data-plan="monthly" data-uid="${u.uid}">✓ Monthly (${planConfig.monthlyDays}d)</button>
-            <button class="mini-btn green" data-admin-action="approve" data-plan="term" data-uid="${u.uid}">✓ Term (${planConfig.termDays}d)</button>
-            <button class="mini-btn danger" data-admin-action="delete" data-uid="${u.uid}">🗑</button>`;
-        }
-        return `<div class="admin-user-row">
-          <div class="au-top"><span class="au-name">${esc(u.username||"user")}</span><span class="au-id">${esc(u.displayId||"—")}</span></div>
-          <div class="au-email">${esc(u.email||"—")}</div>
-          <span class="au-status ${st}">${st==='approved'?'✓ Active':(st==='pending'?'⏳ Pending':'⏰ Expired')} · ${planLabel(u)} · exp: ${esc(expStr)} · joined: ${esc(createdStr)}</span>
-          <div class="admin-actions">${actions}</div>
-        </div>`;
-      };
-
-      if(adminFilterMode==='all'){
-        if(pending.length){
-          body+=`<div class="qa-label" style="color:var(--amber);margin:14px 0 8px;">⏳ Pending / Expired (${pending.length})</div>`;
-          pending.forEach(u=>{body+=renderRow(u)});
-        }
-        if(active.length){
-          body+=`<div class="qa-label" style="color:var(--green);margin:18px 0 8px;">✓ Active (${active.length})</div>`;
-          active.forEach(u=>{body+=renderRow(u)});
-        }
+      const filtered=users.filter(u=>{
+        if(u.uid===ADMIN_UID)return false;
+        if(adminFilterMode==='all')return true;
+        if(adminFilterMode==='monthly')return userPlan(u)==='monthly';
+        if(adminFilterMode==='term')return userPlan(u)==='term';
+        return userStatus(u)===adminFilterMode;
+      });
+      if(filtered.length===0){
+        body+=emptyState("📭","No users here.","Try a different filter.");
       }else{
-        filtered.forEach(u=>{body+=renderRow(u)});
+        const pending=filtered.filter(u=>userStatus(u)!=='approved');
+        const active=filtered.filter(u=>userStatus(u)==='approved');
+        const renderRow=(u)=>{
+          const st=userStatus(u);
+          const exp=u.expiresAt?(u.expiresAt.toDate?u.expiresAt.toDate():new Date(u.expiresAt)):null;
+          const expStr=exp?exp.toLocaleDateString():"—";
+          const created=u.createdAt?(u.createdAt.toDate?u.createdAt.toDate():new Date(u.createdAt)):null;
+          const createdStr=created?created.toLocaleDateString():"—";
+          let actions='';
+          if(st==='pending'){
+            actions=`<button class="mini-btn green" data-admin-action="approve" data-plan="monthly" data-uid="${u.uid}">✓ M (${planConfig.monthlyDays}d)</button>
+              <button class="mini-btn green" data-admin-action="approve" data-plan="term" data-uid="${u.uid}">✓ T (${planConfig.termDays}d)</button>
+              <button class="mini-btn danger" data-admin-action="delete" data-uid="${u.uid}">🗑</button>`;
+          }else if(st==='approved'){
+            actions=`<button class="mini-btn amber" data-admin-action="extend" data-plan="monthly" data-uid="${u.uid}">+${planConfig.monthlyDays}d 📅</button>
+              <button class="mini-btn amber" data-admin-action="extend" data-plan="term" data-uid="${u.uid}">+${planConfig.termDays}d 📚</button>
+              <button class="mini-btn danger" data-admin-action="revoke" data-uid="${u.uid}">✗</button>
+              <button class="mini-btn danger" data-admin-action="delete" data-uid="${u.uid}">🗑</button>`;
+          }else{
+            actions=`<button class="mini-btn green" data-admin-action="approve" data-plan="monthly" data-uid="${u.uid}">✓ M (${planConfig.monthlyDays}d)</button>
+              <button class="mini-btn green" data-admin-action="approve" data-plan="term" data-uid="${u.uid}">✓ T (${planConfig.termDays}d)</button>
+              <button class="mini-btn danger" data-admin-action="delete" data-uid="${u.uid}">🗑</button>`;
+          }
+          return `<div class="admin-user-row">
+            <div class="au-top"><span class="au-name">${esc(u.username||"user")}</span><span class="au-id">${esc(u.displayId||"—")}</span></div>
+            <div class="au-email">${esc(u.email||"—")}</div>
+            <span class="au-status ${st}">${st==='approved'?'✓ Active':(st==='pending'?'⏳ Pending':'⏰ Expired')} · ${planLabel(u)} · exp: ${esc(expStr)} · joined: ${esc(createdStr)}</span>
+            <div class="admin-actions">${actions}</div>
+          </div>`;
+        };
+        if(adminFilterMode==='all'){
+          if(pending.length){body+=`<div class="qa-label" style="color:var(--amber);margin:14px 0 8px;">⏳ Pending (${pending.length})</div>`;pending.forEach(u=>{body+=renderRow(u)})}
+          if(active.length){body+=`<div class="qa-label" style="color:var(--green);margin:18px 0 8px;">✓ Active (${active.length})</div>`;active.forEach(u=>{body+=renderRow(u)})}
+        }else{
+          filtered.forEach(u=>{body+=renderRow(u)});
+        }
       }
+    }
+  }else{
+    body+=`<button class="btn btn-ghost" id="sugRefreshBtn" style="margin-bottom:12px;">🔄 Refresh</button>`;
+    if(!sugs){
+      body+=`<div class="spinner" style="margin:20px auto;"></div><div class="auth-loading">Loading suggestions…</div>`;
+    }else if(sugs.length===0){
+      body+=emptyState("💡","No suggestions yet.","");
+    }else{
+      sugs.forEach(s=>{
+        const dt=s.createdAt&&s.createdAt.toDate?s.createdAt.toDate():null;
+        body+=`<div class="admin-user-row" style="${s.read?'opacity:.55':''}">
+          <div class="au-top"><span class="au-name">${esc(s.username||"user")}</span><span class="au-id">${esc(s.displayId||"")}</span></div>
+          <div style="font-size:11px;color:var(--grey-dim);margin-bottom:6px;">${dt?dt.toLocaleString():""}</div>
+          <div style="font-size:13.5px;line-height:1.5;margin-bottom:8px;white-space:pre-wrap;">${esc(s.text||"")}</div>
+          <div class="admin-actions">
+            <button class="mini-btn ${s.read?'':'green'}" data-sug-action="${s.read?'unread':'read'}" data-sug-id="${s.id}">${s.read?'↩ Mark unread':'✓ Mark read'}</button>
+            <button class="mini-btn danger" data-sug-action="delete" data-sug-id="${s.id}">🗑 Delete</button>
+          </div>
+        </div>`;
+      });
     }
   }
   body+=backBtn("home","Back to Main Menu");
-  const html=shell("ADMIN PANEL",`${users?users.length-1:0} registered users`,body,{path:"~/study/admin"});
-  if(!users){setTimeout(loadAdminUsers,50)}
+  const title=adminTab==="users"?"ADMIN PANEL":"SUGGESTIONS";
+  const sub=adminTab==="users"?`${users?users.length-1:0} registered users`:`${sugs?sugs.length:0} total`;
+  const html=shell(title,sub,body,{path:"~/study/admin"});
+  if(adminTab==="users"&&!users){setTimeout(loadAdminUsers,50)}
+  if(adminTab==="suggestions"&&!sugs){setTimeout(loadAdminSuggestions,50)}
   return html;
 }
-  async function loadAdminUsers(){
-  try{
-    adminUsersCache=await fetchAdminUsers();
-    render();
-  }catch(e){
-    console.error(e);
-    adminUsersCache=[];
-    render();
-    toast("Could not load users");
-  }
-}async function adminAction(action,uid,plan){
+async function loadAdminUsers(){
+  try{adminUsersCache=await fetchAdminUsers();render()}
+  catch(e){console.error(e);adminUsersCache=[];render();toast("Could not load users")}
+}
+async function loadAdminSuggestions(){
+  try{adminSuggestionsCache=await fetchSuggestions();render()}
+  catch(e){console.error(e);adminSuggestionsCache=[];render();toast("Could not load suggestions")}
+}
+async function adminAction(action,uid,plan){
   if(!isAdmin())return;
   try{
     const ref=doc(db,"users",uid);
@@ -1556,16 +2267,26 @@ function pageAdminPanel(){
       await updateDoc(ref,{approved:false,expiresAt:null,plan:null});
       toast("✗ Access revoked");
     }else if(action==="delete"){
-      if(!confirm("Permanently delete this user record? Their login still exists but they'll be treated as a new signup next time. Continue?"))return;
+      if(!confirm("Delete this user record?"))return;
       await deleteDoc(ref);
       toast("🗑 User deleted");
     }
     adminUsersCache=await fetchAdminUsers();
     render();
-  }catch(e){
-    console.error(e);
-    toast("Action failed: "+((e&&e.message)||"unknown"));
-  }
+  }catch(e){console.error(e);toast("Action failed: "+((e&&e.message)||"unknown"))}
+}
+async function handleSuggestionAction(action,id){
+  if(!isAdmin())return;
+  try{
+    if(action==="read") await markSuggestionRead(id,true);
+    else if(action==="unread") await markSuggestionRead(id,false);
+    else if(action==="delete"){
+      if(!confirm("Delete this suggestion?"))return;
+      await deleteSuggestion(id);
+    }
+    adminSuggestionsCache=await fetchSuggestions();
+    render();
+  }catch(e){console.error(e);toast("Failed: "+((e&&e.message)||"unknown"))}
 }
 
 /* ========== SHARED FRAGMENTS ========== */
@@ -1579,19 +2300,24 @@ function scoreBlock(correct,total,pct){
   const cv=`var(--${color})`;
   return `<div class="card" style="text-align:center;"><div style="font-size:24px;font-weight:700;color:${cv};">${correct}/${total} (${pct.toFixed(1)}%)</div><div class="bar-track" style="margin-top:12px;margin-bottom:0;"><div class="bar-fill ${color}" style="width:${pct}%;"></div></div><div style="margin-top:14px;font-weight:700;color:${cv};">${msg}</div></div>`;
 }
-
 /* ========== PAGE MAP ========== */
 const PAGE_MAP={
   home:pageHome,select_subject:pageSelectSubject,new_subject_form:pageNewSubjectForm,
-  subject_menu:pageSubjectMenu,flashcard_menu:pageFlashcardMenu,add_card_form:pageAddCardForm,
-  card_list_view:pageCardListView,manage_card_list:pageManageCardList,edit_card_form:pageEditCardForm,
-  delete_choice:pageDeleteChoice,delete_card_list:pageDeleteCardList,
+  topic_picker:pageTopicPicker,topic_menu:pageTopicMenu,manage_topics:pageManageTopics,
+  add_topic_form:pageAddTopicForm,rename_topic_form:pageRenameTopicForm,
+  flashcard_menu:pageFlashcardMenu,add_card_form:pageAddCardForm,
+  card_list_view:pageCardListView,manage_card_list:pageManageCardList,bulk_edit_cards:pageBulkEditCards,
+  edit_card_form:pageEditCardForm,delete_choice:pageDeleteChoice,delete_card_list:pageDeleteCardList,
+  read_import_cards:pageReadImportCards,
   study_session:pageStudySession,study_complete:pageStudyComplete,
   read_menu:pageReadMenu,read_new_choice:pageReadNewChoice,read_write_form:pageReadWriteForm,
   read_import:pageReadImport,read_view:pageReadView,read_edit_list:pageReadEditList,
   quiz_settings:pageQuizSettings,quiz_session:pageQuizSession,quiz_complete:pageQuizComplete,
-  subject_progress:pageSubjectProgress,timer:pageTimer,timer_active:pageTimerActive,
-  progress:pageProgress,sync_data:pageSyncData,settings:pageSettings,
+  topic_progress:pageTopicProgress,
+  timer:pageTimer,timer_active:pageTimerActive,
+  progress:pageProgress,progress_history:pageFullHistory,goals_settings:pageGoalsSettings,
+  sync_data:pageSyncData,settings:pageSettings,search:pageSearch,
+  rename_subject_form:pageRenameSubjectForm,
   admin_panel:pageAdminPanel
 };
 
@@ -1807,11 +2533,14 @@ function attachHandlers(){
   }else{
     setupSecretDots(app,'single',nav.page==='home');
   }
+
   app.querySelectorAll("[data-go]").forEach(el=>{
     el.addEventListener("click",()=>{
       let params={};
       if(el.dataset.subject)params.subject=el.dataset.subject;
+      if(el.dataset.topic)params.topic=el.dataset.topic;
       if(el.dataset.noteId)params.noteId=el.dataset.noteId;
+      if(el.dataset.clearTopic)params.clearTopic=true;
       if(windowedActive()){wmHandleGo(el.dataset.go,params,el);return}
       if(el.dataset.clearstack)navStack=[];
       goto(el.dataset.go,params);
@@ -1821,25 +2550,135 @@ function attachHandlers(){
   const tbb=app.querySelector("[data-titlebar-back]");
   if(tbb)tbb.addEventListener("click",back);
 
+  /* ---- NEW SUBJECT ---- */
   const newSubjectGo=document.getElementById("newSubjectGo");
   if(newSubjectGo)newSubjectGo.addEventListener("click",()=>{
     const name=document.getElementById("newSubjectName").value.trim();
     if(!name){toast("Subject name can't be empty");return}
     ensureSubject(name);
     saveData(DATA);
-    if(windowedActive()){wmReplace('subject_menu',{subject:name});return}
-    goto("subject_menu",{subject:name},false);
+    if(windowedActive()){wmReplace('topic_picker',{subject:name,assigned:true});return}
+    goto("topic_picker",{subject:name,assigned:true},false);
   });
 
+  /* ---- INITIAL TOPIC ASSIGNMENT ---- */
+  const assignInitialTopicBtn=document.getElementById("assignInitialTopicBtn");
+  if(assignInitialTopicBtn)assignInitialTopicBtn.addEventListener("click",()=>{
+    const subject=nav.params.subject;
+    const name=document.getElementById("initialTopicName").value.trim();
+    if(!name){toast("Topic name can't be empty");return}
+    ensureTopic(subject,name);
+    (DATA.flashcards[subject]||[]).forEach(c=>{if(!c.topic)c.topic=name});
+    (DATA.notes[subject]||[]).forEach(n=>{if(!n.topic)n.topic=name});
+    saveData(DATA);
+    toast(`✅ Tagged ${untaggedCount(subject)} item(s) as "${name}"`);
+    if(windowedActive()){wmReplace('topic_picker',{subject,assigned:true});return}
+    navStack=[];
+    goto("topic_picker",{subject,assigned:true},false);
+  });
+
+  /* ---- ADD TOPIC ---- */
+  const addTopicGo=document.getElementById("addTopicGo");
+  if(addTopicGo)addTopicGo.addEventListener("click",()=>{
+    const subject=nav.params.subject;
+    const name=document.getElementById("newTopicName").value.trim();
+    if(!name){toast("Topic name can't be empty");return}
+    if(topicsFor(subject).includes(name)){toast("That topic already exists");return}
+    ensureTopic(subject,name);
+    saveData(DATA);
+    toast(`✅ Topic "${name}" created`);
+    if(windowedActive()){wmGoBackTo('manage_topics',{subject});return}
+    navStack=[];
+    goto("manage_topics",{subject},false);
+  });
+
+  /* ---- RENAME TOPIC ---- */
+  app.querySelectorAll("[data-rename-topic]").forEach(el=>{
+    el.addEventListener("click",()=>{
+      const subject=nav.params.subject;
+      const topic=el.dataset.renameTopic;
+      if(windowedActive()){wmOpen("rename_topic_form",{subject,topic},CURRENT_WIN_ID);render();return}
+      goto("rename_topic_form",{subject,topic});
+    });
+  });
+  const renameTopicGo=document.getElementById("renameTopicGo");
+  if(renameTopicGo)renameTopicGo.addEventListener("click",()=>{
+    const subject=nav.params.subject;
+    const oldName=nav.params.topic;
+    const newName=document.getElementById("renameTopicName").value.trim();
+    if(!newName){toast("Name can't be empty");return}
+    if(newName===oldName){back();return}
+    if(topicsFor(subject).includes(newName)&&!confirm(`"${newName}" already exists. Merge "${oldName}" into it?`))return;
+    (DATA.flashcards[subject]||[]).forEach(c=>{if(c.topic===oldName)c.topic=newName});
+    (DATA.notes[subject]||[]).forEach(n=>{if(n.topic===oldName)n.topic=newName});
+    (DATA.study_sessions||[]).forEach(s=>{if(s.subject===subject&&s.topic===oldName)s.topic=newName});
+    if(DATA.topics[subject]){
+      DATA.topics[subject]=DATA.topics[subject].filter(t=>t!==oldName);
+      if(!DATA.topics[subject].includes(newName))DATA.topics[subject].push(newName);
+    }
+    ensureTopic(subject,newName);
+    saveData(DATA);
+    toast(`✅ Renamed to "${newName}"`);
+    if(windowedActive()){
+      WM.windows.forEach(w=>{if(w.params&&w.params.subject===subject&&w.params.topic===oldName)w.params.topic=newName});
+      saveWM();
+      wmGoBackTo('manage_topics',{subject});
+      return;
+    }
+    navStack=[];
+    goto("manage_topics",{subject},false);
+  });
+
+  /* ---- DELETE TOPIC ---- */
+  app.querySelectorAll("[data-delete-topic]").forEach(el=>{
+    el.addEventListener("click",()=>{
+      const subject=nav.params.subject;
+      const topic=el.dataset.deleteTopic;
+      const cards=topicCardCount(subject,topic);
+      const notes=topicNoteCount(subject,topic);
+      if(!confirm(`Delete topic "${topic}"?\n\nThis will PERMANENTLY delete ${cards} card(s) and ${notes} note(s).`))return;
+      if(!confirm("Are you absolutely sure? This cannot be undone."))return;
+      DATA.flashcards[subject]=(DATA.flashcards[subject]||[]).filter(c=>c.topic!==topic);
+      DATA.notes[subject]=(DATA.notes[subject]||[]).filter(n=>n.topic!==topic);
+      if(DATA.topics[subject])DATA.topics[subject]=DATA.topics[subject].filter(t=>t!==topic);
+      saveData(DATA);
+      toast(`🗑 Topic "${topic}" deleted`);
+      render();
+    });
+  });
+
+  /* ---- DELETE TOPIC AND CARDS (from delete_choice) ---- */
+  const delTopicAndCardsBtn=document.getElementById("delTopicAndCardsBtn");
+  if(delTopicAndCardsBtn)delTopicAndCardsBtn.addEventListener("click",()=>{
+    const subject=nav.params.subject;
+    const topic=nav.params.topic;
+    const cards=topicCardCount(subject,topic);
+    const notes=topicNoteCount(subject,topic);
+    if(!confirm(`Delete topic "${topic}"?\n\nThis will PERMANENTLY delete ${cards} card(s) and ${notes} note(s).`))return;
+    if(!confirm("Are you absolutely sure? This cannot be undone."))return;
+    DATA.flashcards[subject]=(DATA.flashcards[subject]||[]).filter(c=>c.topic!==topic);
+    DATA.notes[subject]=(DATA.notes[subject]||[]).filter(n=>n.topic!==topic);
+    if(DATA.topics[subject])DATA.topics[subject]=DATA.topics[subject].filter(t=>t!==topic);
+    saveData(DATA);
+    toast(`🗑 Topic "${topic}" deleted`);
+    if(windowedActive()){wmGoBackTo('topic_picker',{subject});return}
+    navStack=[];
+    goto("topic_picker",{subject},false);
+  });
+
+  /* ---- ADD CARD ---- */
   const addCardBtn=document.getElementById("addCardGo");
   if(addCardBtn)addCardBtn.addEventListener("click",()=>{
     const subject=nav.params.subject;
+    const topic=nav.params.topic;
     const q=document.getElementById("cardQuestion").value.trim();
     const a=document.getElementById("cardAnswer").value.trim();
     if(!q){toast("Question can't be empty");return}
     if(!a){toast("Answer can't be empty");return}
+    ensureSubject(subject);
     if(!DATA.flashcards[subject])DATA.flashcards[subject]=[];
-    DATA.flashcards[subject].push({question:q,answer:a,review_count:0,last_reviewed:null,created:new Date().toISOString()});
+    DATA.flashcards[subject].push({question:q,answer:a,topic,review_count:0,last_reviewed:null,created:new Date().toISOString()});
+    ensureTopic(subject,topic);
     saveData(DATA);
     toast("✅ Flashcard added");
     document.getElementById("cardQuestion").value="";
@@ -1847,21 +2686,7 @@ function attachHandlers(){
     document.getElementById("cardQuestion").focus();
   });
 
-  const delEntire=document.getElementById("delEntireSubject");
-  if(delEntire)delEntire.addEventListener("click",()=>{
-    const subject=nav.params.subject;
-    const n=cardCount(subject),nn=notesCount(subject);
-    if(confirm(`Delete '${subject}' entirely, including ${n} card(s) and ${nn} note(s)? This can't be undone.`)){
-      delete DATA.flashcards[subject];
-      delete DATA.notes[subject];
-      saveData(DATA);
-      toast(`'${subject}' deleted`);
-      if(windowedActive()){wmGoBackTo('select_subject',{});return}
-      navStack=[];
-      goto("select_subject",{},false);
-    }
-  });
-
+  /* ---- DELETE CARD ---- */
   app.querySelectorAll("[data-del-card-idx]").forEach(el=>{
     el.addEventListener("click",()=>{
       const subject=nav.params.subject;
@@ -1871,24 +2696,26 @@ function attachHandlers(){
         DATA.flashcards[subject].splice(idx,1);
         saveData(DATA);
         toast("Card deleted");
-        if(windowedActive()){wmReplace('flashcard_menu',{subject});return}
+        if(windowedActive()){wmReplace('flashcard_menu',{subject,topic:nav.params.topic});return}
         navStack=[];
-        goto("flashcard_menu",{subject},false);
+        goto("flashcard_menu",{subject,topic:nav.params.topic},false);
       }
     });
   });
 
+  /* ---- EDIT CARD ---- */
   app.querySelectorAll("[data-pick-edit-card]").forEach(el=>{
     el.addEventListener("click",()=>{
       const subject=nav.params.subject;
+      const topic=nav.params.topic;
       const cardIdx=parseInt(el.dataset.pickEditCard,10);
-      if(windowedActive()){wmOpen("edit_card_form",{subject,cardIdx},CURRENT_WIN_ID);render();return}
-      goto("edit_card_form",{subject,cardIdx});
+      if(windowedActive()){wmOpen("edit_card_form",{subject,topic,cardIdx},CURRENT_WIN_ID);render();return}
+      goto("edit_card_form",{subject,topic,cardIdx});
     });
   });
   const saveEditBtn=document.getElementById("saveEditBtn");
   if(saveEditBtn)saveEditBtn.addEventListener("click",()=>{
-    const{subject,cardIdx}=nav.params;
+    const{subject,topic,cardIdx}=nav.params;
     const q=document.getElementById("editQuestion").value.trim();
     const a=document.getElementById("editAnswer").value.trim();
     if(!q){toast("Question can't be empty");return}
@@ -1897,19 +2724,60 @@ function attachHandlers(){
     if(card){card.question=q;card.answer=a}
     saveData(DATA);
     toast("✅ Changes saved");
-    if(windowedActive()){wmGoBackTo('manage_card_list',{subject});return}
+    if(windowedActive()){wmGoBackTo('manage_card_list',{subject,topic});return}
     navStack=[];
-    goto("manage_card_list",{subject},false);
+    goto("manage_card_list",{subject,topic},false);
   });
 
-  app.querySelectorAll("[data-study-subject]").forEach(el=>{
+  /* ---- BULK EDIT ---- */
+  const bulkSelectAllBtn=document.getElementById("bulkSelectAllBtn");
+  if(bulkSelectAllBtn)bulkSelectAllBtn.addEventListener("click",()=>{
+    const cbs=document.querySelectorAll(".bulk-cb");
+    const allChecked=Array.from(cbs).every(cb=>cb.checked);
+    cbs.forEach(cb=>{cb.checked=!allChecked});
+  });
+  const bulkMoveBtn=document.getElementById("bulkMoveBtn");
+  if(bulkMoveBtn)bulkMoveBtn.addEventListener("click",()=>{
+    const subject=nav.params.subject;
+    const currentTopic=nav.params.topic;
+    const target=document.getElementById("bulkMoveTopic").value.trim();
+    if(!target){toast("Enter a target topic name");return}
+    const selected=[...document.querySelectorAll(".bulk-cb:checked")].map(cb=>parseInt(cb.dataset.bulkIdx,10));
+    if(!selected.length){toast("Select at least one card");return}
+    selected.forEach(i=>{if(DATA.flashcards[subject][i])DATA.flashcards[subject][i].topic=target});
+    ensureTopic(subject,target);
+    saveData(DATA);
+    toast(`✅ Moved ${selected.length} card(s) to "${target}"`);
+    if(windowedActive()){wmGoBackTo('manage_card_list',{subject,topic:currentTopic});return}
+    navStack=[];
+    goto("manage_card_list",{subject,topic:currentTopic},false);
+  });
+  const bulkDeleteBtn=document.getElementById("bulkDeleteBtn");
+  if(bulkDeleteBtn)bulkDeleteBtn.addEventListener("click",()=>{
+    const subject=nav.params.subject;
+    const topic=nav.params.topic;
+    const selected=[...document.querySelectorAll(".bulk-cb:checked")].map(cb=>parseInt(cb.dataset.bulkIdx,10));
+    if(!selected.length){toast("Select at least one card");return}
+    if(!confirm(`Delete ${selected.length} card(s)?`))return;
+    const sorted=selected.sort((a,b)=>b-a);
+    sorted.forEach(i=>{DATA.flashcards[subject].splice(i,1)});
+    saveData(DATA);
+    toast(`🗑 ${selected.length} card(s) deleted`);
+    if(windowedActive()){wmGoBackTo('manage_card_list',{subject,topic});return}
+    navStack=[];
+    goto("manage_card_list",{subject,topic},false);
+  });
+
+  /* ---- STUDY ---- */
+  app.querySelectorAll("[data-study-topic]").forEach(el=>{
     el.addEventListener("click",()=>{
-      const subject=el.dataset.studySubject;
-      const cards=DATA.flashcards[subject];
-      if(!cards||cards.length===0){toast("No cards in this subject yet");return}
+      const subject=nav.params.subject;
+      const topic=el.dataset.studyTopic;
+      const cards=cardsInTopic(subject,topic);
+      if(!cards.length){toast("No cards in this topic yet");return}
       const order=cards.map((_,i)=>i);
       shuffle(order);
-      const params={subject,order,idx:0,correct:0,revealed:false};
+      const params={subject,topic,order,idx:0,correct:0,revealed:false};
       if(windowedActive()){
         if(el.dataset.clearstack){wmReplace('study_session',params);return}
         wmOpen('study_session',params,CURRENT_WIN_ID);render();return;
@@ -1931,10 +2799,10 @@ function attachHandlers(){
       let params=nav.params;
       let win=null;
       if(windowedActive()){win=wmWindowById(CURRENT_WIN_ID);if(win)params=win.params}
-      const{subject,order,idx}=params;
+      const{subject,topic,order,idx}=params;
       let correct=params.correct;
       const cardIdx=order[idx];
-      const card=DATA.flashcards[subject][cardIdx];
+      const card=cardsInTopic(subject,topic)[cardIdx];
       if(el.dataset.studyAnswer==="y"){
         correct++;
         card.review_count=(card.review_count||0)+1;
@@ -1944,14 +2812,14 @@ function attachHandlers(){
       const nextIdx=idx+1;
       if(nextIdx>=order.length){
         const total=order.length;
-        DATA.study_sessions.push({subject,date:new Date().toISOString(),score:(correct/total)*100,cards_studied:total,correct_answers:correct,type:'study'});
+        DATA.study_sessions.push({subject,topic,date:new Date().toISOString(),score:(correct/total)*100,cards_studied:total,correct_answers:correct,type:'study'});
         saveData(DATA);
-        const cp={subject,correct,total};
+        const cp={subject,topic,correct,total};
         if(windowedActive()&&win){win.page='study_complete';win.params=cp;saveWM();render();return}
         navStack=[];
         goto("study_complete",cp,false);
       }else{
-        const np={subject,order,idx:nextIdx,correct,revealed:false};
+        const np={subject,topic,order,idx:nextIdx,correct,revealed:false};
         if(windowedActive()&&win){win.params=np;saveWM();render();return}
         nav.params=np;
         render();
@@ -1959,33 +2827,37 @@ function attachHandlers(){
     });
   });
 
+  /* ---- NOTES ---- */
   const saveNoteBtn=document.getElementById("saveNoteBtn");
   if(saveNoteBtn)saveNoteBtn.addEventListener("click",()=>{
     const subject=nav.params.subject;
+    const topic=nav.params.topic;
     const noteId=nav.params.noteId;
     const title=document.getElementById("noteTitle").value.trim();
     const content=document.getElementById("noteContent").value.trim();
     if(!title){toast("Title can't be empty");return}
-    if(!content){toast("Notes can't be empty");return}
+    if(!content){toast("Content can't be empty");return}
     ensureSubject(subject);
+    ensureTopic(subject,topic);
     if(noteId){
       const note=getNote(subject,noteId);
       if(note){note.title=title;note.content=content}
     }else{
-      DATA.notes[subject].push({id:genId('note'),title,content,created:new Date().toISOString()});
+      DATA.notes[subject].push({id:genId('note'),title,content,topic,created:new Date().toISOString()});
     }
     saveData(DATA);
-    toast(noteId?"✅ Changes saved":"✅ Topic saved");
-    if(windowedActive()){wmGoBackTo('read_menu',{subject});return}
+    toast(noteId?"✅ Changes saved":"✅ Note saved");
+    if(windowedActive()){wmGoBackTo('read_menu',{subject,topic});return}
     navStack=[];
-    goto("read_menu",{subject},false);
+    goto("read_menu",{subject,topic},false);
   });
   app.querySelectorAll("[data-edit-note]").forEach(el=>{
     el.addEventListener("click",()=>{
       const subject=nav.params.subject;
+      const topic=nav.params.topic;
       const noteId=el.dataset.editNote;
-      if(windowedActive()){wmOpen("read_write_form",{subject,noteId},CURRENT_WIN_ID);render();return}
-      goto("read_write_form",{subject,noteId});
+      if(windowedActive()){wmOpen("read_write_form",{subject,topic,noteId},CURRENT_WIN_ID);render();return}
+      goto("read_write_form",{subject,topic,noteId});
     });
   });
   app.querySelectorAll("[data-del-note]").forEach(el=>{
@@ -1994,11 +2866,11 @@ function attachHandlers(){
       const id=el.dataset.delNote;
       const note=getNote(subject,id);
       if(!note)return;
-      if(confirm(`Delete topic "${note.title}"?`)){
+      if(confirm(`Delete note "${note.title}"?`)){
         if(ttsNoteId===id)ttsStop();
         DATA.notes[subject]=DATA.notes[subject].filter(n=>n.id!==id);
         saveData(DATA);
-        toast("Topic deleted");
+        toast("Note deleted");
         render();
       }
     });
@@ -2017,19 +2889,22 @@ function attachHandlers(){
   const deleteNoteBtn=document.getElementById("deleteNoteBtn");
   if(deleteNoteBtn)deleteNoteBtn.addEventListener("click",()=>{
     const subject=nav.params.subject;
+    const topic=nav.params.topic;
     const noteId=nav.params.noteId;
     const note=getNote(subject,noteId);
     if(!note)return;
-    if(confirm(`Delete topic "${note.title}"?`)){
+    if(confirm(`Delete note "${note.title}"?`)){
       if(ttsNoteId===noteId)ttsStop();
       DATA.notes[subject]=DATA.notes[subject].filter(n=>n.id!==noteId);
       saveData(DATA);
-      toast("Topic deleted");
-      if(windowedActive()){wmGoBackTo('read_menu',{subject});return}
+      toast("Note deleted");
+      if(windowedActive()){wmGoBackTo('read_menu',{subject,topic});return}
       navStack=[];
-      goto("read_menu",{subject},false);
+      goto("read_menu",{subject,topic},false);
     }
   });
+
+  /* ---- NOTE IMPORT ---- */
   const noteImportBtn=document.getElementById("noteImportBtn");
   const noteImportInput=document.getElementById("noteImportInput");
   if(noteImportBtn&&noteImportInput){
@@ -2041,25 +2916,71 @@ function attachHandlers(){
         const preview=document.getElementById("noteImportPreview");
         if(err){preview.innerHTML=`<div class="card" style="border-color:#5a2424;"><div class="qa-label" style="color:var(--red);">⚠️ ${esc(err)}</div></div>`;return}
         const subject=nav.params.subject;
+        const topic=nav.params.topic;
         ensureSubject(subject);
+        ensureTopic(subject,topic);
         let added=0;
         notesToAdd.forEach(n=>{
           if(!n||(!n.title&&!n.content))return;
-          DATA.notes[subject].push({id:genId('note'),title:n.title||"Untitled",content:n.content||"",created:new Date().toISOString()});
+          DATA.notes[subject].push({id:genId('note'),title:n.title||"Untitled",content:n.content||"",topic,created:new Date().toISOString()});
           added++;
         });
         saveData(DATA);
-        preview.innerHTML=`<div class="card" style="border-color:#1f4d3a;"><div class="qa-label" style="color:var(--green);">✅ Imported</div><div class="qa-text" style="font-size:13.5px;">${added} topic${added===1?'':'s'} added.</div></div>`;
-        toast("✅ Topic imported");
+        preview.innerHTML=`<div class="card" style="border-color:#1f4d3a;"><div class="qa-label" style="color:var(--green);">✅ Imported</div><div class="qa-text" style="font-size:13.5px;">${added} note${added===1?'':'s'} added to "${esc(topic)}".</div></div>`;
+        toast("✅ Notes imported");
         noteImportInput.value="";
       });
     });
   }
-  const exNotes=document.getElementById("exampleNotesBtn");
-  if(exNotes)exNotes.addEventListener("click",()=>{downloadExampleNotes();toast("⬇️ Example notes downloaded")});
-  const exBackup=document.getElementById("exampleBackupBtn");
-  if(exBackup)exBackup.addEventListener("click",()=>{downloadExampleBackup();toast("⬇️ Example backup downloaded")});
 
+  /* ---- CARD IMPORT ---- */
+  const cardImportBtn=document.getElementById("cardImportBtn");
+  const cardImportInput=document.getElementById("cardImportInput");
+  if(cardImportBtn&&cardImportInput){
+    cardImportBtn.addEventListener("click",()=>cardImportInput.click());
+    cardImportInput.addEventListener("change",e=>{
+      const file=e.target.files[0];
+      if(!file)return;
+      parseCardsFile(file,(cardsToAdd,err)=>{
+        const preview=document.getElementById("cardImportPreview");
+        if(err){preview.innerHTML=`<div class="card" style="border-color:#5a2424;"><div class="qa-label" style="color:var(--red);">⚠️ ${esc(err)}</div></div>`;return}
+        const subject=nav.params.subject;
+        const topic=nav.params.topic;
+        ensureSubject(subject);
+        ensureTopic(subject,topic);
+        let added=0;
+        cardsToAdd.forEach(c=>{
+          if(!c||!c.question||!c.answer)return;
+          DATA.flashcards[subject].push({question:c.question,answer:c.answer,topic,review_count:0,last_reviewed:null,created:new Date().toISOString()});
+          added++;
+        });
+        saveData(DATA);
+        preview.innerHTML=`<div class="card" style="border-color:#1f4d3a;"><div class="qa-label" style="color:var(--green);">✅ Imported</div><div class="qa-text" style="font-size:13.5px;">${added} card${added===1?'':'s'} added to "${esc(topic)}".</div></div>`;
+        toast("✅ Cards imported");
+        cardImportInput.value="";
+      });
+    });
+  }
+
+  /* ---- TTS CONTROLS ---- */
+  const ttsVoiceSel=document.getElementById("ttsVoiceSel");
+  if(ttsVoiceSel)ttsVoiceSel.addEventListener("change",()=>{ttsPrefs.voice=ttsVoiceSel.value;saveTtsPrefs()});
+  const ttsRate=document.getElementById("ttsRate");
+  if(ttsRate)ttsRate.addEventListener("input",()=>{
+    ttsPrefs.rate=parseFloat(ttsRate.value);
+    const el=document.getElementById("ttsRateVal");
+    if(el)el.textContent=ttsPrefs.rate.toFixed(2)+"×";
+    saveTtsPrefs();
+  });
+  const ttsPitch=document.getElementById("ttsPitch");
+  if(ttsPitch)ttsPitch.addEventListener("input",()=>{
+    ttsPrefs.pitch=parseFloat(ttsPitch.value);
+    const el=document.getElementById("ttsPitchVal");
+    if(el)el.textContent=ttsPrefs.pitch.toFixed(2);
+    saveTtsPrefs();
+  });
+
+  /* ---- QUIZ SETTINGS ---- */
   const quizModeSel=document.getElementById("quizTimerMode");
   if(quizModeSel){
     const optsBox=document.getElementById("quizTimerOpts");
@@ -2069,15 +2990,23 @@ function attachHandlers(){
   const startQuizBtn=document.getElementById("startQuizBtn");
   if(startQuizBtn)startQuizBtn.addEventListener("click",()=>{
     const subject=nav.params.subject;
-    const maxQ=Math.min(10,cardCount(subject));
+    const topic=nav.params.topic;
+    const cards=cardsInTopic(subject,topic);
+    const maxQ=Math.min(10,cards.length);
     let n=parseInt(document.getElementById("numQuestions").value,10);
     if(isNaN(n))n=maxQ;
     n=Math.min(Math.max(1,n),maxQ);
     const mode=quizModeSel?quizModeSel.value:'none';
-    const pool=[...DATA.flashcards[subject]];
+    const answerMode=document.getElementById("quizAnswerMode").value;
+    const pool=[...cards];
     shuffle(pool);
     const order=pool.slice(0,n);
-    const params={subject,order,idx:0,score:0,userAnswer:"",checked:false,result:null,timerMode:mode};
+    const params={subject,topic,order,idx:0,score:0,userAnswer:"",checked:false,result:null,timerMode:mode,answerMode,choices:null};
+    if(answerMode==='mcq'){
+      const allCards=cardsInTopic(subject,topic);
+      const wrongPool=allCards.map(c=>c.answer).filter(a=>a.trim());
+      params.choices=buildMcqChoices(order[0].answer,wrongPool);
+    }
     if(mode==='perq'){
       let secs=parseInt((document.getElementById("quizPerQSeconds")||{}).value,10);
       if(isNaN(secs)||secs<5)secs=30;
@@ -2096,6 +3025,9 @@ function attachHandlers(){
   if(submitAnswerBtn)submitAnswerBtn.addEventListener("click",submitQuizAnswer);
   const qi=document.getElementById("quizAnswerInput");
   if(qi)qi.addEventListener("keydown",e=>{if(e.key==="Enter")submitQuizAnswer()});
+  app.querySelectorAll("[data-mcq-choice]").forEach(el=>{
+    el.addEventListener("click",()=>submitMcqAnswer(parseInt(el.dataset.mcqChoice,10)));
+  });
   app.querySelectorAll("[data-quiz-override]").forEach(el=>{
     el.addEventListener("click",()=>{
       const ov=el.dataset.quizOverride==="y";
@@ -2107,10 +3039,11 @@ function attachHandlers(){
   });
   const nextQBtn=document.getElementById("nextQuestionBtn");
   if(nextQBtn)nextQBtn.addEventListener("click",advanceQuiz);
-  app.querySelectorAll("[data-quiz-subject]").forEach(el=>{
+  app.querySelectorAll("[data-quiz-topic]").forEach(el=>{
     el.addEventListener("click",()=>{
-      const subj=el.dataset.quizSubject;
-      const params={subject:subj};
+      const topic=el.dataset.quizTopic;
+      const subject=nav.params.subject;
+      const params={subject,topic};
       if(windowedActive()){
         if(el.dataset.clearstack){wmReplace('quiz_settings',params);return}
         wmOpen('quiz_settings',params,CURRENT_WIN_ID);render();return;
@@ -2118,6 +3051,8 @@ function attachHandlers(){
       goto("quiz_settings",params);
     });
   });
+
+  /* ---- TIMER ---- */
   app.querySelectorAll("[data-timer-preset]").forEach(el=>{
     el.addEventListener("click",()=>{document.getElementById("timerMinutes").value=el.dataset.timerPreset});
   });
@@ -2137,8 +3072,127 @@ function attachHandlers(){
   const pauseTimerBtn=document.getElementById("pauseTimerBtn");
   if(pauseTimerBtn)pauseTimerBtn.addEventListener("click",()=>{if(TIMER.paused)resumeTimer();else pauseTimer();render()});
   const hideTimerBtn=document.getElementById("hideTimerBtn");
-  if(hideTimerBtn)hideTimerBtn.addEventListener("click",()=>{hideTimerBar();toast("Timer hidden — tap the ⏰ bubble to bring it back");render()});
+  if(hideTimerBtn)hideTimerBtn.addEventListener("click",()=>{hideTimerBar();toast("Timer hidden");render()});
 
+  /* ---- GOAL ---- */
+  const saveGoalBtn=document.getElementById("saveGoalBtn");
+  if(saveGoalBtn)saveGoalBtn.addEventListener("click",()=>{
+    const v=parseInt(document.getElementById("dailyGoalInput").value,10);
+    if(isNaN(v)||v<1){toast("Enter a valid number");return}
+    setDailyGoal(v);
+    toast("🎯 Goal updated");
+    if(windowedActive()){wmGoBackTo('progress',{});return}
+    navStack=[];
+    goto("progress",{},false);
+  });
+
+  /* ---- HISTORY ---- */
+  app.querySelectorAll("[data-hfilter]").forEach(el=>{
+    el.addEventListener("click",()=>{
+      historyFilter=el.dataset.hfilter;
+      render();
+    });
+  });
+  const exportHistoryBtn=document.getElementById("exportHistoryBtn");
+  if(exportHistoryBtn)exportHistoryBtn.addEventListener("click",()=>{
+    const blob=new Blob([JSON.stringify(DATA.study_sessions,null,2)],{type:"application/json"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    const stamp=new Date().toISOString().slice(0,10);
+    a.href=url;a.download=`d4n-sessions-${stamp}.json`;
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    toast("⬇️ Sessions exported");
+  });
+  const clearHistoryBtn=document.getElementById("clearHistoryBtn");
+  if(clearHistoryBtn)clearHistoryBtn.addEventListener("click",()=>{
+    if(!confirm(`Delete all ${DATA.study_sessions.length} session records?`))return;
+    if(!confirm("This can't be undone."))return;
+    DATA.study_sessions=[];
+    saveData(DATA);
+    toast("🗑 History cleared");
+    render();
+  });
+
+  /* ---- SEARCH ---- */
+  const searchInput=document.getElementById("searchInput");
+  if(searchInput){
+    searchInput.addEventListener("input",()=>{
+      clearTimeout(window._searchDebounce);
+      window._searchDebounce=setTimeout(()=>{
+        nav.params.q=searchInput.value;
+        const pos=searchInput.selectionStart;
+        render();
+        const ni=document.getElementById("searchInput");
+        if(ni){ni.focus();try{ni.setSelectionRange(pos,pos)}catch(e){}}
+      },180);
+    });
+  }
+  app.querySelectorAll("[data-goto-subject]").forEach(el=>{
+    el.addEventListener("click",()=>{
+      const subject=el.dataset.subject;
+      if(windowedActive()){wmOpen("topic_picker",{subject},CURRENT_WIN_ID);render();return}
+      goto("topic_picker",{subject});
+    });
+  });
+  app.querySelectorAll("[data-goto-card]").forEach(el=>{
+    el.addEventListener("click",()=>{
+      const subject=el.dataset.subject;
+      const idx=parseInt(el.dataset.idx,10);
+      const card=DATA.flashcards[subject][idx];
+      const topic=card?card.topic:"";
+      if(windowedActive()){wmOpen("edit_card_form",{subject,topic,cardIdx:idx},CURRENT_WIN_ID);render();return}
+      goto("edit_card_form",{subject,topic,cardIdx:idx});
+    });
+  });
+  app.querySelectorAll("[data-goto-note]").forEach(el=>{
+    el.addEventListener("click",()=>{
+      const subject=el.dataset.subject;
+      const noteId=el.dataset.noteId;
+      const note=getNote(subject,noteId);
+      const topic=note?note.topic:"";
+      if(windowedActive()){wmOpen("read_view",{subject,topic,noteId},CURRENT_WIN_ID);render();return}
+      goto("read_view",{subject,topic,noteId});
+    });
+  });
+
+  /* ---- RENAME SUBJECT ---- */
+  const renameSubjectGo=document.getElementById("renameSubjectGo");
+  if(renameSubjectGo)renameSubjectGo.addEventListener("click",()=>{
+    const oldName=nav.params.subject;
+    const newName=document.getElementById("renameSubjectName").value.trim();
+    if(!newName){toast("Name can't be empty");return}
+    if(newName===oldName){back();return}
+    if(DATA.flashcards[newName]||DATA.notes[newName]){
+      if(!confirm(`"${newName}" already exists. Merge into it?`))return;
+      DATA.flashcards[newName]=[...(DATA.flashcards[newName]||[]),...(DATA.flashcards[oldName]||[])];
+      DATA.notes[newName]=[...(DATA.notes[newName]||[]),...(DATA.notes[oldName]||[])];
+      DATA.topics[newName]=[...new Set([...(DATA.topics[newName]||[]),...(DATA.topics[oldName]||[])])];
+      delete DATA.flashcards[oldName];
+      delete DATA.notes[oldName];
+      delete DATA.topics[oldName];
+    }else{
+      DATA.flashcards[newName]=DATA.flashcards[oldName];
+      DATA.notes[newName]=DATA.notes[oldName];
+      DATA.topics[newName]=DATA.topics[oldName];
+      delete DATA.flashcards[oldName];
+      delete DATA.notes[oldName];
+      delete DATA.topics[oldName];
+    }
+    DATA.study_sessions.forEach(s=>{if(s.subject===oldName)s.subject=newName});
+    saveData(DATA);
+    toast(`✅ Renamed to "${newName}"`);
+    if(windowedActive()){
+      WM.windows.forEach(w=>{if(w.params&&w.params.subject===oldName)w.params.subject=newName});
+      saveWM();
+      wmGoBackTo('topic_picker',{subject:newName});
+      return;
+    }
+    navStack=[];
+    goto("topic_picker",{subject:newName},false);
+  });
+
+  /* ---- EXPORT / IMPORT ---- */
   const exportFullBtn=document.getElementById("exportFullBtn");
   if(exportFullBtn)exportFullBtn.addEventListener("click",()=>{exportFull();toast("⬇️ Full backup downloaded")});
   const exportNoDataBtn=document.getElementById("exportNoDataBtn");
@@ -2161,22 +3215,23 @@ function attachHandlers(){
       reader.onload=ev=>{
         let parsed;
         try{parsed=JSON.parse(ev.target.result)}catch(err){
-          document.getElementById("importPreview").innerHTML=`<div class="card" style="border-color:#5a2424;"><div class="qa-label" style="color:var(--red);">⚠️ Couldn't read that file</div><div class="qa-text" style="font-size:13px;">Make sure you picked a backup .json file exported from this app.</div></div>`;
+          document.getElementById("importPreview").innerHTML=`<div class="card" style="border-color:#5a2424;"><div class="qa-label" style="color:var(--red);">⚠️ Couldn't read that file</div></div>`;
           return;
         }
         if(!parsed.flashcards&&!parsed.study_sessions&&!parsed.notes){
-          document.getElementById("importPreview").innerHTML=`<div class="card" style="border-color:#5a2424;"><div class="qa-label" style="color:var(--red);">⚠️ Not a recognized backup file</div></div>`;
+          document.getElementById("importPreview").innerHTML=`<div class="card" style="border-color:#5a2424;"><div class="qa-label" style="color:var(--red);">⚠️ Not a recognized backup</div></div>`;
           return;
         }
         const stats=mergeImportedData(parsed);
         let parts=[];
         if(stats.newSubjects)parts.push(`${stats.newSubjects} new subject${stats.newSubjects>1?'s':''}`);
+        if(stats.newTopics)parts.push(`${stats.newTopics} new topic${stats.newTopics>1?'s':''}`);
         if(stats.newCards)parts.push(`${stats.newCards} new card${stats.newCards>1?'s':''}`);
         if(stats.newNotes)parts.push(`${stats.newNotes} new note${stats.newNotes>1?'s':''}`);
         if(stats.newSessions)parts.push(`${stats.newSessions} new session${stats.newSessions>1?'s':''}`);
         const skipped=stats.skippedCards+stats.skippedSessions+(stats.skippedNotes||0);
-        const summary=parts.length?parts.join(", ")+" added.":"Nothing new — everything in that file was already here.";
-        document.getElementById("importPreview").innerHTML=`<div class="card" style="border-color:#1f4d3a;"><div class="qa-label" style="color:var(--green);">✅ Import complete</div><div class="qa-text" style="font-size:13.5px;">${esc(summary)}</div>${skipped?`<div class="qa-text" style="font-size:12px;color:var(--grey);margin-top:8px;">${skipped} already existed and were left untouched.</div>`:""}</div>`;
+        const summary=parts.length?parts.join(", ")+" added.":"Nothing new — everything was already here.";
+        document.getElementById("importPreview").innerHTML=`<div class="card" style="border-color:#1f4d3a;"><div class="qa-label" style="color:var(--green);">✅ Import complete</div><div class="qa-text" style="font-size:13.5px;">${esc(summary)}</div>${skipped?`<div class="qa-text" style="font-size:12px;color:var(--grey);margin-top:8px;">${skipped} already existed.</div>`:""}</div>`;
         toast("✅ Import complete");
         importFileInput.value="";
       };
@@ -2184,6 +3239,42 @@ function attachHandlers(){
     });
   }
 
+  /* ---- EXAMPLE FILES ---- */
+  const exNotes=document.getElementById("exampleNotesBtn");
+  if(exNotes)exNotes.addEventListener("click",()=>{downloadExampleNotes();toast("⬇️ Example notes downloaded")});
+  const exBackup=document.getElementById("exampleBackupBtn");
+  if(exBackup)exBackup.addEventListener("click",()=>{downloadExampleBackup();toast("⬇️ Example backup downloaded")});
+
+  /* ---- SUGGESTIONS ---- */
+  const submitSuggestionBtn=document.getElementById("submitSuggestionBtn");
+  if(submitSuggestionBtn)submitSuggestionBtn.addEventListener("click",async()=>{
+    const text=document.getElementById("suggestionText").value.trim();
+    const status=document.getElementById("suggestionStatus");
+    if(!text){status.style.color="var(--red)";status.textContent="Write something first.";return}
+    status.style.color="var(--grey)";status.textContent="Sending…";
+    try{
+      await submitSuggestion(text);
+      status.style.color="var(--green)";status.textContent="✅ Sent! Thanks.";
+      document.getElementById("suggestionText").value="";
+      toast("💡 Suggestion sent");
+    }catch(e){
+      status.style.color="var(--red)";status.textContent="Failed to send. Check connection.";
+    }
+  });
+
+  /* ---- SYNC ---- */
+  const syncNowBtn=document.getElementById("syncNowBtn");
+  if(syncNowBtn)syncNowBtn.addEventListener("click",async()=>{
+    toast("Syncing…");
+    await pullDataFromCloud();
+    await pushDataToCloud();
+    render();
+    toast("✅ Synced");
+  });
+  const syncPendingEl=document.getElementById("syncPending");
+  if(syncPendingEl)syncPendingEl.textContent=localDirty?"Changes waiting to upload":"All up to date";
+
+  /* ---- WM TOGGLE ---- */
   const wmToggle=document.getElementById("wmToggleSwitch");
   if(wmToggle)wmToggle.addEventListener("click",()=>{
     if(!WM_ENABLED&&window.innerWidth<700){toast("Windowed mode is PC-only");return}
@@ -2199,25 +3290,16 @@ function attachHandlers(){
     toast(WM_ENABLED?"Windowed mode ON":"Windowed mode OFF");
     render();
   });
-  const syncNowBtn=document.getElementById("syncNowBtn");
-  if(syncNowBtn)syncNowBtn.addEventListener("click",async()=>{
-    toast("Syncing…");
-    await pullDataFromCloud();
-    await pushDataToCloud();
-    render();
-    toast("✅ Synced");
-  });
-  const syncPendingEl=document.getElementById("syncPending");
-  if(syncPendingEl)syncPendingEl.textContent=localDirty?"Changes waiting to upload":"All up to date";
+
+  /* ---- SIGN OUT / WIPE ---- */
   const signOutBtn=document.getElementById("signOutBtn");
   if(signOutBtn)signOutBtn.addEventListener("click",handleSignOut);
-
   const wipeBtn=document.getElementById("wipeDataBtn");
   if(wipeBtn)wipeBtn.addEventListener("click",()=>{
-    if(!confirm("Delete ALL saved data?\n\nEvery subject, flashcard, note and study session will be erased. This cannot be undone."))return;
-    if(!confirm("Are you absolutely sure? This is permanent."))return;
+    if(!confirm("Delete ALL saved data? This is permanent."))return;
+    if(!confirm("Are you absolutely sure?"))return;
     try{localStorage.removeItem(STORAGE_KEY);localStorage.removeItem(TIMER_KEY);localStorage.removeItem(WM_STATE_KEY)}catch(e){}
-    DATA={flashcards:{},study_sessions:[],notes:{}};
+    DATA={flashcards:{},study_sessions:[],notes:{},topics:{}};
     saveData(DATA);
     TIMER=blankTimer();saveTimer();
     stopChirping();ttsStop();
@@ -2229,13 +3311,14 @@ function attachHandlers(){
     goto("home",{},false);
   });
 
+  /* ---- ADMIN ---- */
   app.querySelectorAll("[data-afilter]").forEach(el=>{
-    el.addEventListener("click",()=>{
-      adminFilterMode=el.dataset.afilter;
-      render();
-    });
+    el.addEventListener("click",()=>{adminFilterMode=el.dataset.afilter;render()});
   });
-    const savePlanCfgBtn=document.getElementById("savePlanCfgBtn");
+  app.querySelectorAll("[data-atab]").forEach(el=>{
+    el.addEventListener("click",()=>{adminTab=el.dataset.atab;render()});
+  });
+  const savePlanCfgBtn=document.getElementById("savePlanCfgBtn");
   if(savePlanCfgBtn)savePlanCfgBtn.addEventListener("click",async()=>{
     const m=parseInt(document.getElementById("cfgMonthlyDays").value,10);
     const t=parseInt(document.getElementById("cfgTermDays").value,10);
@@ -2247,17 +3330,36 @@ function attachHandlers(){
   });
   const adminRefresh=document.getElementById("adminRefreshBtn");
   if(adminRefresh)adminRefresh.addEventListener("click",()=>{adminUsersCache=null;render()});
-      app.querySelectorAll("[data-admin-action]").forEach(el=>{
+  const sugRefreshBtn=document.getElementById("sugRefreshBtn");
+  if(sugRefreshBtn)sugRefreshBtn.addEventListener("click",()=>{adminSuggestionsCache=null;render()});
+  app.querySelectorAll("[data-admin-action]").forEach(el=>{
     el.addEventListener("click",()=>{
-      const action=el.dataset.adminAction;
-      const uid=el.dataset.uid;
-      const plan=el.dataset.plan||null;
-      adminAction(action,uid,plan);
+      adminAction(el.dataset.adminAction,el.dataset.uid,el.dataset.plan||null);
+    });
+  });
+  app.querySelectorAll("[data-sug-action]").forEach(el=>{
+    el.addEventListener("click",()=>{
+      handleSuggestionAction(el.dataset.sugAction,el.dataset.sugId);
     });
   });
 }
 
 /* ========== QUIZ SUBMIT / ADVANCE ========== */
+function buildMcqChoices(correctAnswer,wrongPool){
+  const choices=[correctAnswer];
+  const wrongs=[...new Set(wrongPool.filter(a=>a!==correctAnswer))];
+  shuffle(wrongs);
+  for(const w of wrongs){
+    if(choices.length>=4)break;
+    if(!choices.includes(w))choices.push(w);
+  }
+  while(choices.length<4){
+    const filler="(not enough distractors)";
+    if(choices.includes(filler))break;
+    choices.push(filler);
+  }
+  return shuffle(choices);
+}
 function submitQuizAnswer(){
   const input=document.getElementById("quizAnswerInput");
   const userAnswer=input?input.value.trim():"";
@@ -2282,22 +3384,45 @@ function submitQuizAnswer(){
   if(windowedActive()&&win)saveWM();
   render();
 }
+function submitMcqAnswer(choiceIdx){
+  let params=nav.params;
+  let win=null;
+  if(windowedActive()){win=wmWindowById(CURRENT_WIN_ID);if(win)params=win.params}
+  const{order,idx,choices}=params;
+  const card=order[idx];
+  const chosen=choices[choiceIdx];
+  const correct=chosen===card.answer;
+  params.userAnswer=chosen;
+  params.checked=true;
+  params.result=correct?"correct":"wrong";
+  if(correct)params.score+=1;
+  if(params.timerMode&&params.timerMode!=='none'){
+    params.frozenRemaining=quizRemaining(params);
+  }
+  if(windowedActive()&&win)saveWM();
+  render();
+}
 function advanceQuiz(){
   let params=nav.params;
   let win=null;
   if(windowedActive()){win=wmWindowById(CURRENT_WIN_ID);if(win)params=win.params}
-  const{subject,order,idx,score}=params;
+  const{subject,topic,order,idx,score,answerMode}=params;
   const nextIdx=idx+1;
   if(nextIdx>=order.length){
     const total=order.length;
-    DATA.study_sessions.push({subject,date:new Date().toISOString(),score:(score/total)*100,cards_studied:total,correct_answers:score,type:'quiz'});
+    DATA.study_sessions.push({subject,topic,date:new Date().toISOString(),score:(score/total)*100,cards_studied:total,correct_answers:score,type:'quiz'});
     saveData(DATA);
-    const comp={subject,score,total};
+    const comp={subject,topic,score,total};
     if(windowedActive()&&win){win.page='quiz_complete';win.params=comp;saveWM();render();return}
     navStack=[];
     goto("quiz_complete",comp,false);
   }else{
-    const next={subject,order,idx:nextIdx,score,userAnswer:"",checked:false,result:null,timerMode:params.timerMode};
+    const next={subject,topic,order,idx:nextIdx,score,userAnswer:"",checked:false,result:null,timerMode:params.timerMode,answerMode,choices:null};
+    if(answerMode==='mcq'){
+      const allCards=cardsInTopic(subject,topic);
+      const wrongPool=allCards.map(c=>c.answer).filter(a=>a.trim());
+      next.choices=buildMcqChoices(order[nextIdx].answer,wrongPool);
+    }
     if(params.timerMode==='perq'){next.perQSeconds=params.perQSeconds;next.qEndsAt=Date.now()+(params.perQSeconds||30)*1000}
     else if(params.timerMode==='whole'){next.quizEndsAt=params.quizEndsAt}
     if(windowedActive()&&win){win.params=next;saveWM();render();return}
@@ -2324,6 +3449,11 @@ document.addEventListener('visibilitychange',()=>{
     pushDataToCloud();
   }
 });
+if('speechSynthesis' in window){
+  window.speechSynthesis.onvoiceschanged = () => {
+    if(nav.page === 'read_view') render();
+  };
+}
 </script>
 <script>
   if ('serviceWorker' in navigator) {
