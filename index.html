@@ -1458,10 +1458,9 @@ function pageFlashcardMenu(){
     <div class="menu">
       <button class="menu-item accent" data-go="add_card_form"><span class="num">1.</span><span class="icon">➕</span><span class="label">Add New Flashcard</span></button>
       <button class="menu-item" data-go="card_list_view"><span class="num">2.</span><span class="icon">👀</span><span class="label">View All Cards</span><span class="meta">${cc} cards</span></button>
-      <button class="menu-item" data-go="manage_card_list"><span class="num">3.</span><span class="icon">✏️</span><span class="label">Edit / Bulk Edit</span></button>
-      <button class="menu-item" data-go="read_import_cards"><span class="num">4.</span><span class="icon">📥</span><span class="label">Import Cards into Topic</span></button>
-      <button class="menu-item danger" data-go="delete_choice"><span class="num">5.</span><span class="icon">🗑️</span><span class="label">Delete Card(s)</span></button>
-      <button class="menu-item" data-go="topic_menu" data-clearstack="1"><span class="num">6.</span><span class="icon">↩️</span><span class="label">Back to Topic</span></button>
+      <button class="menu-item" data-go="manage_card_list"><span class="num">3.</span><span class="icon">✏️</span><span class="label">Edit</span></button>
+      <button class="menu-item danger" data-go="delete_choice"><span class="num">4.</span><span class="icon">🗑️</span><span class="label">Delete Card(s)</span></button>
+      <button class="menu-item" data-go="topic_menu" data-clearstack="1"><span class="num">5.</span><span class="icon">↩️</span><span class="label">Back to Topic</span></button>
     </div>
   `;
   return shell("FLASHCARD MANAGER",topic,body,{path:`~/study/${slug(subject)}/${slug(topic)}/flashcards`});
@@ -2031,7 +2030,19 @@ function pageSyncData(){
       <input type="file" id="importFileInput" accept="application/json,.json" style="display:none;">
       <button class="btn btn-primary" id="importDataBtn" style="background:var(--green);border-color:var(--green);">Choose backup file</button>
     </div>
-    <div id="importPreview"></div>
+       <div id="importPreview"></div>
+    <div class="card">
+      <div class="qa-label" style="color:var(--green);">📥 Import Cards into a Topic</div>
+      ${subs.length===0?`<div class="qa-text" style="font-size:13.5px;">No subjects yet.</div>`:`
+      <div class="qa-text" style="font-size:13px;margin-bottom:12px;">Pick a subject and type a topic name, then choose a .json file of flashcards.</div>
+      <label class="field-label">Subject</label>
+      <select class="subj-select" id="importCardSubject">${opts}</select>
+      <label class="field-label">Topic name</label>
+      <input type="text" id="importCardTopic" placeholder="New or existing topic">
+      <input type="file" id="importCardFile" accept="application/json,.json" style="display:none;">
+      <button class="btn btn-primary" id="importCardBtn" style="background:var(--green);border-color:var(--green);">Choose file &amp; import</button>
+      <div id="importCardPreview"></div>`}
+    </div>
     ${backBtn("home","Back to menu")}
   `;
   return shell("IMPORT / EXPORT","",body,{path:"~/study/sync"});
@@ -3238,7 +3249,40 @@ function attachHandlers(){
       reader.readAsText(file);
     });
   }
-
+  /* ---- IMPORT CARDS INTO TOPIC  ---- */
+  const importCardBtn2=document.getElementById("importCardBtn");
+  const importCardFile2=document.getElementById("importCardFile");
+  if(importCardBtn2&&importCardFile2){
+    importCardBtn2.addEventListener("click",()=>{
+      const subj=document.getElementById("importCardSubject").value;
+      const topic=document.getElementById("importCardTopic").value.trim();
+      if(!subj){toast("Pick a subject");return}
+      if(!topic){toast("Enter a topic name");return}
+      importCardFile2.click();
+    });
+    importCardFile2.addEventListener("change",e=>{
+      const file=e.target.files[0];
+      if(!file)return;
+      const subj=document.getElementById("importCardSubject").value;
+      const topic=document.getElementById("importCardTopic").value.trim();
+      parseCardsFile(file,(cardsToAdd,err)=>{
+        const preview=document.getElementById("importCardPreview");
+        if(err){preview.innerHTML=`<div class="card" style="border-color:#5a2424;"><div class="qa-label" style="color:var(--red);">⚠️ ${esc(err)}</div></div>`;return}
+        ensureSubject(subj);
+        ensureTopic(subj,topic);
+        let added=0;
+        cardsToAdd.forEach(c=>{
+          if(!c||!c.question||!c.answer)return;
+          DATA.flashcards[subj].push({question:c.question,answer:c.answer,topic,review_count:0,last_reviewed:null,created:new Date().toISOString()});
+          added++;
+        });
+        saveData(DATA);
+        preview.innerHTML=`<div class="card" style="border-color:#1f4d3a;"><div class="qa-label" style="color:var(--green);">✅ Imported</div><div class="qa-text" style="font-size:13.5px;">${added} card${added===1?'':'s'} added to "${esc(subj)}" › "${esc(topic)}".</div></div>`;
+        toast("✅ Cards imported");
+        importCardFile2.value="";
+      });
+    });
+  }
   /* ---- EXAMPLE FILES ---- */
   const exNotes=document.getElementById("exampleNotesBtn");
   if(exNotes)exNotes.addEventListener("click",()=>{downloadExampleNotes();toast("⬇️ Example notes downloaded")});
@@ -3438,11 +3482,10 @@ if(TIMER.active){
   if(rem<=0&&!TIMER.paused){TIMER.alarming=true;TIMER.hidden=false;saveTimer();startChirping()}
 }
 setInterval(()=>{tickTimer();tickQuizTimer()},1000);
-window.addEventListener('resize',()=>{render()});
-window.addEventListener('online',()=>{
-  if(!currentUser||!APP_READY)return;
-  if(localDirty) pushDataToCloud();
-  else pullDataFromCloud().then(()=>render());
+window.addEventListener('resize',()=>{
+  const el=document.activeElement;
+  if(el && (el.tagName==='INPUT' || el.tagName==='TEXTAREA' || el.isContentEditable)) return;
+  render();
 });
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState==='visible'&&currentUser&&APP_READY&&localDirty){
