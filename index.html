@@ -170,6 +170,33 @@ details.tts-prefs[open] summary::before{content:"▾ "}
 .au-status.pending{background:rgba(240,179,94,.15);color:var(--amber)}
 .au-status.expired{background:rgba(255,107,107,.15);color:var(--red)}
 .admin-actions{display:flex;gap:6px;flex-wrap:wrap}
+.plan-grid{display:flex;flex-direction:column;gap:12px;margin:18px 0}
+.plan-card{position:relative;display:block;width:100%;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:18px 16px;cursor:pointer;text-align:left;color:var(--white);font-family:inherit;transition:border-color .15s,transform .08s}
+.plan-card:hover{border-color:var(--border-bright)}
+.plan-card:active{transform:scale(.985)}
+.plan-card.recommended{border-color:var(--cyan);background:rgba(94,230,208,.05)}
+.plan-badge{position:absolute;top:-9px;right:12px;background:var(--cyan);color:#06231e;font-size:9.5px;font-weight:700;letter-spacing:.08em;padding:3px 9px;border-radius:10px}
+.plan-name{font-size:16px;font-weight:700;color:var(--amber);margin-bottom:6px}
+.plan-price{font-size:26px;font-weight:700;color:var(--white)}
+.plan-cur{font-size:12px;color:var(--grey);font-weight:400;margin-left:4px}
+.plan-usd{font-size:12.5px;color:var(--grey);margin-top:2px}
+.plan-cadence{font-size:11px;color:var(--cyan);margin-top:6px;letter-spacing:.04em;text-transform:uppercase}
+.plan-desc{font-size:11.5px;color:var(--grey-dim);margin-top:8px;padding-top:10px;border-top:1px solid var(--border)}
+.method-btn{display:flex;align-items:center;gap:14px;width:100%;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:16px;cursor:pointer;text-align:left;color:var(--white);font-family:inherit;font-size:14.5px;margin-bottom:10px;transition:border-color .15s,transform .08s}
+.method-btn:hover{border-color:var(--border-bright)}
+.method-btn:active{transform:scale(.985)}
+.method-icon{font-size:24px;flex-shrink:0}
+.method-name{font-weight:700;color:var(--white)}
+.method-sub{font-size:11.5px;color:var(--grey);margin-top:3px}
+.paywall-info{background:var(--bg);border:1px dashed var(--border);border-radius:8px;padding:14px;margin:14px 0;font-size:13px;line-height:1.6;color:var(--grey)}
+.paywall-info strong{color:var(--cyan)}
+.paywall-ref{font-family:inherit;font-size:22px;font-weight:700;color:var(--cyan);text-align:center;letter-spacing:.08em;background:var(--bg);border:1px solid var(--border-bright);border-radius:8px;padding:14px;margin:12px 0;cursor:pointer;user-select:all;-webkit-user-select:all;word-break:break-all}
+.paywall-ref:active{transform:scale(.985)}
+.method-btn.disabled{opacity:.45;cursor:not-allowed;border-style:dashed}
+.method-btn.disabled:hover{border-color:var(--border)}
+.method-btn.disabled:active{transform:none}
+.method-soon{font-size:10px;color:var(--amber);letter-spacing:.06em;text-transform:uppercase;margin-top:4px;font-weight:700}
+.paywall-copy-hint{text-align:center;color:var(--grey-dim);font-size:10.5px;margin-top:-6px;margin-bottom:14px;letter-spacing:.05em}
 .admin-actions .mini-btn{flex:1;min-width:70px;padding:7px 8px}
 @media (max-width:380px){.qa-text{font-size:14.5px}.timer-display{font-size:38px}.display-id{font-size:22px;padding:16px 10px}}
 </style>
@@ -194,6 +221,12 @@ const firebaseConfig = {
   appId: "1:189507822224:web:b0959b1ceef41481702e15"
 };
 const ADMIN_UID = "EMTxL9cIU4dhRQeOptEaHfrhWty2";
+const LYNk_ENABLED = false;
+const LYNk_NUMBER = "";
+const PLANS = {
+  monthly: { name:"Monthly", jmd:500,  usd:5,  cadence:"per month", desc:"Renews every 30 days." },
+  term:    { name:"Term",    jmd:2500, usd:25, cadence:"per term",  desc:"About 4 months of access." }
+};
 
 const fbApp = initializeApp(firebaseConfig);
 const auth  = getAuth(fbApp);
@@ -344,25 +377,195 @@ function showSignupScreen(){
   document.getElementById("suPassword").addEventListener("keydown",e=>{if(e.key==="Enter")doSignup()});
   document.getElementById("goLogin").addEventListener("click",showLoginScreen);
 }
-function showPendingScreen(){
-  const id=currentUserDoc?.displayId||"—";
-  showAuthGate(`<div class="auth-card">
-    <div class="auth-brand">D4N's Study Assistant</div>
-    <div class="auth-title">Almost there</div>
-    <div class="auth-sub">Your account is created but not activated yet. Show this ID to <strong style="color:var(--amber);">D4N</strong> at school and pay to unlock.</div>
-    <div class="auth-badge pending">⏳ Awaiting activation</div>
-    <div class="display-id" id="pendingId">${esc(id)}</div>
-    <div class="display-id-hint">tap to copy</div>
-    <button class="btn btn-ghost" id="copyIdBtn">📋 Copy User ID</button>
-    <button class="btn btn-primary" id="checkAgainBtn" style="margin-top:10px;">🔄 Check status</button>
-    <div class="auth-link"><a id="pSignOut">Sign out</a></div>
-  </div>`);
-  const copy=async()=>{try{await navigator.clipboard.writeText(id);toast("📋 Copied!")}catch(e){toast("Long-press to copy")}};
-  document.getElementById("pendingId").addEventListener("click",copy);
-  document.getElementById("copyIdBtn").addEventListener("click",copy);
-  document.getElementById("checkAgainBtn").addEventListener("click",checkStatusAgain);
-  document.getElementById("pSignOut").addEventListener("click",handleSignOut);
+function showPaywallScreen(){
+  const u = currentUserDoc || {};
+  const requested = u.requestedPlan || "";
+  const method = u.paymentMethod || "";
+  const claimed = !!u.paymentClaimed;
+  if(!requested) return paywallPlanPicker();
+  if(!method)    return paywallMethodPicker(requested);
+  if(!claimed)   return paywallInstructions(requested, method);
+  return paywallWaiting(requested, method);
 }
+
+function paywallPlanPicker(){
+  const cards = Object.entries(PLANS).map(([id,p],i)=>`
+    <button class="plan-card ${i===0?'recommended':''}" data-plan="${id}">
+      ${i===0?'<div class="plan-badge">POPULAR</div>':''}
+      <div class="plan-name">${esc(p.name)}</div>
+      <div class="plan-price">$${p.jmd}<span class="plan-cur">JMD</span></div>
+      <div class="plan-usd">or $${p.usd} USD</div>
+      <div class="plan-cadence">${esc(p.cadence)}</div>
+      <div class="plan-desc">${esc(p.desc)}</div>
+    </button>`).join("");
+  showAuthGate(`<div class="auth-card" style="max-width:480px;">
+    <div class="auth-brand">D4N's Study Assistant</div>
+    <div class="auth-title">Choose your plan</div>
+    <div class="auth-sub">Pick a plan to unlock the full app. You'll pick how to pay next.</div>
+    <div class="plan-grid">${cards}</div>
+    <div class="auth-link"><a id="pwSignOut">Sign out</a></div>
+  </div>`);
+  document.querySelectorAll("[data-plan]").forEach(el=>{
+    el.addEventListener("click",()=>pickPaywallPlan(el.dataset.plan));
+  });
+  document.getElementById("pwSignOut").addEventListener("click",handleSignOut);
+}
+
+async function pickPaywallPlan(planId){
+  if(!currentUser||!PLANS[planId])return;
+  try{
+    await updateDoc(doc(db,"users",currentUser.uid),{requestedPlan:planId});
+    currentUserDoc.requestedPlan = planId;
+    showPaywallScreen();
+  }catch(e){console.error(e);toast("Could not save plan. Try again.")}
+}
+
+function paywallMethodPicker(planId){
+  const p = PLANS[planId];
+  showAuthGate(`<div class="auth-card" style="max-width:480px;">
+    <div class="auth-brand">D4N's Study Assistant</div>
+    <div class="auth-title">How will you pay?</div>
+    <div class="auth-sub">${esc(p.name)} plan — $${p.jmd} JMD / $${p.usd} USD</div>
+    <button class="method-btn" data-method="cash">
+      <div class="method-icon">🏫</div>
+      <div><div class="method-name">Pay in person</div><div class="method-sub">Cash at school — find D4N</div></div>
+    </button>
+        ${LYNk_ENABLED ? `
+    <button class="method-btn" data-method="lynk">
+      <div class="method-icon">📱</div>
+      <div><div class="method-name">Pay via Lynk</div><div class="method-sub">Send from your Lynk app</div></div>
+    </button>` : `
+    <button class="method-btn disabled" disabled>
+      <div class="method-icon">📱</div>
+      <div><div class="method-name">Pay via Lynk</div><div class="method-sub">Send from your Lynk app</div><div class="method-soon">⏳ Coming soon</div></div>
+    </button>`}
+    <div class="auth-link"><a id="pwBack">← Back to plans</a></div>
+  </div>`);
+  document.querySelectorAll("[data-method]").forEach(el=>{
+    el.addEventListener("click",()=>pickPaywallMethod(el.dataset.method));
+  });
+  document.getElementById("pwBack").addEventListener("click",async()=>{
+    try{
+      await updateDoc(doc(db,"users",currentUser.uid),{requestedPlan:""});
+      currentUserDoc.requestedPlan = "";
+      showPaywallScreen();
+    }catch(e){toast("Could not go back. Try again.")}
+  });
+}
+
+async function pickPaywallMethod(method){
+  if(!currentUser)return;
+  try{
+    await updateDoc(doc(db,"users",currentUser.uid),{paymentMethod:method});
+    currentUserDoc.paymentMethod = method;
+    showPaywallScreen();
+  }catch(e){console.error(e);toast("Could not save. Try again.")}
+}
+
+function paywallInstructions(planId, method){
+  if(method === "lynk" && !LYNk_ENABLED) method = "cash";
+  const p = PLANS[planId];
+  const id = currentUserDoc?.displayId || "—";
+  let body = "";
+  if(method === "lynk"){
+    body = `
+      <div class="paywall-info">
+        <div style="margin-bottom:10px;"><strong>1.</strong> Open your Lynk app and send <strong>$${p.jmd} JMD</strong> (or <strong>$${p.usd} USD</strong>) to:</div>
+        <div class="paywall-ref" id="lynkNum">${esc(LYNk_NUMBER)}</div>
+        <div class="paywall-copy-hint">tap to copy</div>
+        <div style="margin-bottom:10px;"><strong>2.</strong> In the payment note, put this exact reference:</div>
+        <div class="paywall-ref" id="lynkRef">${esc(id)}</div>
+        <div class="paywall-copy-hint">tap to copy</div>
+        <div style="margin-top:14px;"><strong>3.</strong> Once sent, tap the button below. D4N will verify the payment and unlock your account.</div>
+      </div>
+      <button class="btn btn-primary" id="pwClaimedBtn">✅ I've sent the payment</button>
+    `;
+  } else {
+    body = `
+      <div class="paywall-info">
+        <div style="margin-bottom:10px;">Show this ID to <strong>D4N</strong> at school and hand over <strong>$${p.jmd} JMD</strong> (or <strong>$${p.usd} USD</strong>) in cash.</div>
+        <div class="paywall-ref" id="cashRef">${esc(id)}</div>
+        <div class="paywall-copy-hint">tap to copy</div>
+        <div style="margin-top:14px;">Once you've paid, tap the button below so D4N knows to activate you.</div>
+      </div>
+      <button class="btn btn-primary" id="pwClaimedBtn">✅ I've paid in person</button>
+    `;
+  }
+  showAuthGate(`<div class="auth-card" style="max-width:480px;">
+    <div class="auth-brand">D4N's Study Assistant</div>
+    <div class="auth-title">${method==='lynk'?'Pay via Lynk':'Pay in person'}</div>
+    <div class="auth-sub">${esc(p.name)} plan — $${p.jmd} JMD / $${p.usd} USD</div>
+    ${body}
+    <div class="auth-link"><a id="pwMethodBack">← Change payment method</a></div>
+    <div class="auth-link"><a id="pwSignOut2">Sign out</a></div>
+  </div>`);
+  const copyEls = ["lynkNum","lynkRef","cashRef"];
+  copyEls.forEach(cid=>{
+    const el = document.getElementById(cid);
+    if(el) el.addEventListener("click", async()=>{
+      try{ await navigator.clipboard.writeText(el.textContent.trim()); toast("📋 Copied!"); }
+      catch(e){ toast("Long-press to copy"); }
+    });
+  });
+  document.getElementById("pwClaimedBtn").addEventListener("click", markPaymentClaimed);
+  document.getElementById("pwMethodBack").addEventListener("click", async()=>{
+    try{
+      await updateDoc(doc(db,"users",currentUser.uid),{paymentMethod:"",paymentClaimed:false});
+      currentUserDoc.paymentMethod = "";
+      currentUserDoc.paymentClaimed = false;
+      showPaywallScreen();
+    }catch(e){toast("Could not go back")}
+  });
+  document.getElementById("pwSignOut2").addEventListener("click",handleSignOut);
+}
+
+async function markPaymentClaimed(){
+  if(!currentUser)return;
+  try{
+    await updateDoc(doc(db,"users",currentUser.uid),{
+      paymentClaimed: true,
+      paymentClaimedAt: serverTimestamp()
+    });
+    currentUserDoc.paymentClaimed = true;
+    showPaywallScreen();
+  }catch(e){console.error(e);toast("Could not save. Try again.")}
+}
+
+function paywallWaiting(planId, method){
+  const p = PLANS[planId];
+  const id = currentUserDoc?.displayId || "—";
+  const methodLabel = method === "lynk" ? "📱 Lynk" : "🏫 In person";
+  showAuthGate(`<div class="auth-card" style="max-width:480px;">
+    <div class="auth-brand">D4N's Study Assistant</div>
+    <div class="auth-title">Waiting for approval</div>
+    <div class="auth-sub">Your payment is being verified. You'll be unlocked as soon as D4N confirms it.</div>
+    <div class="auth-badge pending">⏳ Awaiting activation</div>
+    <div class="auth-info-row"><span>Plan</span><span class="val">${esc(p.name)}</span></div>
+    <div class="auth-info-row"><span>Amount</span><span class="val">$${p.jmd} JMD / $${p.usd} USD</span></div>
+    <div class="auth-info-row"><span>Method</span><span class="val">${methodLabel}</span></div>
+    <div class="auth-info-row"><span>Reference</span><span class="val" style="color:var(--cyan);letter-spacing:.05em;">${esc(id)}</span></div>
+    <button class="btn btn-primary" id="pwCheckBtn" style="margin-top:14px;">🔄 Check status</button>
+    <button class="btn btn-ghost" id="pwCancelBtn" style="margin-top:8px;">Cancel payment request</button>
+    <div class="auth-link"><a id="pwSignOut3">Sign out</a></div>
+  </div>`);
+  document.getElementById("pwCheckBtn").addEventListener("click", checkStatusAgain);
+  document.getElementById("pwCancelBtn").addEventListener("click", async()=>{
+    if(!confirm("Cancel your payment request? You can restart it any time."))return;
+    try{
+      await updateDoc(doc(db,"users",currentUser.uid),{
+        requestedPlan:"", paymentMethod:"", paymentClaimed:false
+      });
+      currentUserDoc.requestedPlan = "";
+      currentUserDoc.paymentMethod = "";
+      currentUserDoc.paymentClaimed = false;
+      showPaywallScreen();
+    }catch(e){toast("Could not cancel")}
+  });
+  document.getElementById("pwSignOut3").addEventListener("click",handleSignOut);
+}
+
+// Legacy alias — kept so existing calls keep working
+function showPendingScreen(){ showPaywallScreen(); }
 function showExpiredScreen(){
   const id=currentUserDoc?.displayId||"—";
   showAuthGate(`<div class="auth-card">
@@ -2106,7 +2309,7 @@ function pageSettings(){
       <button class="menu-item" data-go="home" data-clearstack="1"><span class="icon">↩️</span><span class="label">Back to Main Menu</span></button>
     </div>
     <div class="page-sub" style="margin-top:16px;">(LEAVE BLANK)</div>
-    <div class="page-sub" style="margin-top:2px;color:var(--grey-dim);font-size:10.5px;">V5.0.0-topics</div>
+    <div class="page-sub" style="margin-top:2px;color:var(--grey-dim);font-size:10.5px;">V5.4.0</div>
   `;
   return shell("SETTINGS","",body,{path:"~/study/settings"});
 }
@@ -2204,10 +2407,15 @@ function pageAdminPanel(){
               <button class="mini-btn green" data-admin-action="approve" data-plan="term" data-uid="${u.uid}">✓ T (${planConfig.termDays}d)</button>
               <button class="mini-btn danger" data-admin-action="delete" data-uid="${u.uid}">🗑</button>`;
           }
+                   const reqPlan = u.requestedPlan ? PLANS[u.requestedPlan] : null;
+          const reqBadge = reqPlan
+            ? `<span class="au-status pending" style="margin-top:6px;display:block;">💳 Requested: ${esc(reqPlan.name)} · $${reqPlan.jmd} JMD ${u.paymentClaimed?'· ✅ Paid (claim)':''} · ${u.paymentMethod==='lynk'?'📱 Lynk':(u.paymentMethod==='cash'?'🏫 Cash':'—')}</span>`
+            : "";
           return `<div class="admin-user-row">
             <div class="au-top"><span class="au-name">${esc(u.username||"user")}</span><span class="au-id">${esc(u.displayId||"—")}</span></div>
             <div class="au-email">${esc(u.email||"—")}</div>
             <span class="au-status ${st}">${st==='approved'?'✓ Active':(st==='pending'?'⏳ Pending':'⏰ Expired')} · ${planLabel(u)} · exp: ${esc(expStr)} · joined: ${esc(createdStr)}</span>
+            ${reqBadge}
             <div class="admin-actions">${actions}</div>
           </div>`;
         };
