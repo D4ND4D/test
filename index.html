@@ -2460,9 +2460,17 @@ function pageAdminPanel(){
           const reqPlan = u.requestedPlan ? PLANS[u.requestedPlan] : null;
           const reqCur = u.currency === "USD" ? "USD" : "JMD";
           const reqAmt = reqPlan ? (reqCur === "USD" ? "$"+reqPlan.usd+" USD" : "$"+reqPlan.jmd+" JMD") : "";
-          const reqBadge = reqPlan
+                    const reqBadge = reqPlan
             ? `<span class="au-status pending" style="margin-top:6px;display:block;">💳 Requested: ${esc(reqPlan.name)} · ${esc(reqAmt)}${u.paymentClaimed?' · ✅ Paid (claim)':''} · ${u.paymentMethod==='lynk'?'📱 Lynk':(u.paymentMethod==='cash'?'🏫 Cash':'—')}</span>`
             : "";
+          return `<div class="admin-user-row">
+            <div class="au-top"><span class="au-name">${esc(u.username||"user")}</span><span class="au-id">${esc(u.displayId||"—")}</span></div>
+            <div class="au-email">${esc(u.email||"—")}</div>
+            <span class="au-status ${st}">${st==='approved'?'✓ Active':(st==='pending'?'⏳ Pending':'⏰ Expired')} · ${planLabel(u)} · exp: ${esc(expStr)} · joined: ${esc(createdStr)}</span>
+            ${reqBadge}
+            <div class="admin-actions">${actions}</div>
+          </div>`;
+        };
         if(adminFilterMode==='all'){
           if(pending.length){body+=`<div class="qa-label" style="color:var(--amber);margin:14px 0 8px;">⏳ Pending (${pending.length})</div>`;pending.forEach(u=>{body+=renderRow(u)})}
           if(active.length){body+=`<div class="qa-label" style="color:var(--green);margin:18px 0 8px;">✓ Active (${active.length})</div>`;active.forEach(u=>{body+=renderRow(u)})}
