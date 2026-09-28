@@ -196,6 +196,11 @@ details.tts-prefs[open] summary::before{content:"▾ "}
 .method-btn.disabled:hover{border-color:var(--border)}
 .method-btn.disabled:active{transform:none}
 .method-soon{font-size:10px;color:var(--amber);letter-spacing:.06em;text-transform:uppercase;margin-top:4px;font-weight:700}
+.paywall-coming{margin-top:18px;padding-top:14px;border-top:1px dashed var(--border);text-align:center}
+.paywall-coming-label{font-size:10.5px;color:var(--grey-dim);letter-spacing:.08em;text-transform:uppercase;margin-bottom:10px}
+.paywall-coming-icon{display:flex;flex-direction:column;align-items:center;gap:6px;opacity:.5}
+.paywall-coming-icon img{width:32px;height:32px;object-fit:contain;filter:grayscale(.4);border-radius:6px}
+.paywall-coming-icon span{font-size:9.5px;color:var(--grey-dim);letter-spacing:.04em}
 .paywall-copy-hint{text-align:center;color:var(--grey-dim);font-size:10.5px;margin-top:-6px;margin-bottom:14px;letter-spacing:.05em}
 .admin-actions .mini-btn{flex:1;min-width:70px;padding:7px 8px}
 @media (max-width:380px){.qa-text{font-size:14.5px}.timer-display{font-size:38px}.display-id{font-size:22px;padding:16px 10px}}
@@ -227,6 +232,25 @@ const PLANS = {
   monthly: { name:"Monthly", jmd:500,  usd:5,  cadence:"per month", desc:"Renews every 30 days." },
   term:    { name:"Term",    jmd:2500, usd:25, cadence:"per term",  desc:"About 4 months of access." }
 };
+const DIGITAL_METHODS_COMING = [
+  { id:"lynk",     name:"Lynk",     logo:"logos/lynk.png" },
+  { id:"mycash",   name:"MyCash",   logo:"logos/mycash.png" },
+  { id:"jnpay",    name:"JN Pay",   logo:"logos/jnpay.png" },
+  { id:"handypay", name:"HandyPay", logo:"logos/handypay.png" },
+  { id:"paypal",   name:"PayPal",   logo:"logos/paypal.png" }
+];
+function isJamaicaUser(){
+  try{
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+    return tz.indexOf("Jamaica") !== -1;
+  }catch(e){ return false; }
+}
+function priceFor(plan, currency){
+  return currency === "USD" ? {amt:plan.usd, cur:"USD"} : {amt:plan.jmd, cur:"JMD"};
+}
+function currencyLabel(plan, currency){
+  return "$" + (currency === "USD" ? plan.usd : plan.jmd) + " " + currency;
+}
 
 const fbApp = initializeApp(firebaseConfig);
 const auth  = getAuth(fbApp);
@@ -389,15 +413,17 @@ function showPaywallScreen(){
 }
 
 function paywallPlanPicker(){
-  const cards = Object.entries(PLANS).map(([id,p],i)=>`
-    <button class="plan-card ${i===0?'recommended':''}" data-plan="${id}">
+  const currency = isJamaicaUser() ? "JMD" : "USD";
+  const cards = Object.entries(PLANS).map(([id,p],i)=>{
+    const price = priceFor(p, currency);
+    return `<button class="plan-card ${i===0?'recommended':''}" data-plan="${id}">
       ${i===0?'<div class="plan-badge">POPULAR</div>':''}
       <div class="plan-name">${esc(p.name)}</div>
-      <div class="plan-price">$${p.jmd}<span class="plan-cur">JMD</span></div>
-      <div class="plan-usd">or $${p.usd} USD</div>
+      <div class="plan-price">$${price.amt}<span class="plan-cur">${price.cur}</span></div>
       <div class="plan-cadence">${esc(p.cadence)}</div>
       <div class="plan-desc">${esc(p.desc)}</div>
-    </button>`).join("");
+    </button>`;
+  }).join("");
   showAuthGate(`<div class="auth-card" style="max-width:480px;">
     <div class="auth-brand">D4N's Study Assistant</div>
     <div class="auth-title">Choose your plan</div>
@@ -413,41 +439,51 @@ function paywallPlanPicker(){
 
 async function pickPaywallPlan(planId){
   if(!currentUser||!PLANS[planId])return;
+  const currency = isJamaicaUser() ? "JMD" : "USD";
   try{
-    await updateDoc(doc(db,"users",currentUser.uid),{requestedPlan:planId});
+    await updateDoc(doc(db,"users",currentUser.uid),{requestedPlan:planId, currency});
     currentUserDoc.requestedPlan = planId;
+    currentUserDoc.currency = currency;
     showPaywallScreen();
   }catch(e){console.error(e);toast("Could not save plan. Try again.")}
 }
 
 function paywallMethodPicker(planId){
   const p = PLANS[planId];
+  const currency = currentUserDoc.currency || (isJamaicaUser() ? "JMD" : "USD");
+  const price = priceFor(p, currency);
+  const cashEnabled = currency === "JMD";
+  const cashBtn = cashEnabled
+    ? `<button class="method-btn" data-method="cash">
+        <div class="method-icon">🏫</div>
+        <div><div class="method-name">Pay in person</div><div class="method-sub">Cash at school — find D4N</div></div>
+      </button>`
+    : `<button class="method-btn disabled" disabled>
+        <div class="method-icon">🏫</div>
+        <div><div class="method-name">Pay in person</div><div class="method-sub">Cash at school — find D4N</div><div class="method-soon">Only available in Jamaica</div></div>
+      </button>`;
+    const comingIcons = DIGITAL_METHODS_COMING.map(m=>
+    `<div class="paywall-coming-icon"><img src="${esc(m.logo)}" alt="${esc(m.name)}" loading="lazy"><span>${esc(m.name)}</span></div>`
+  ).join("");
   showAuthGate(`<div class="auth-card" style="max-width:480px;">
     <div class="auth-brand">D4N's Study Assistant</div>
     <div class="auth-title">How will you pay?</div>
-    <div class="auth-sub">${esc(p.name)} plan — $${p.jmd} JMD / $${p.usd} USD</div>
-    <button class="method-btn" data-method="cash">
-      <div class="method-icon">🏫</div>
-      <div><div class="method-name">Pay in person</div><div class="method-sub">Cash at school — find D4N</div></div>
-    </button>
-        ${LYNk_ENABLED ? `
-    <button class="method-btn" data-method="lynk">
-      <div class="method-icon">📱</div>
-      <div><div class="method-name">Pay via Lynk</div><div class="method-sub">Send from your Lynk app</div></div>
-    </button>` : `
-    <button class="method-btn disabled" disabled>
-      <div class="method-icon">📱</div>
-      <div><div class="method-name">Pay via Lynk</div><div class="method-sub">Send from your Lynk app</div><div class="method-soon">⏳ Coming soon</div></div>
-    </button>`}
-    <div class="auth-link"><a id="pwBack">← Back to plans</a></div>
+    <div class="auth-sub">${esc(p.name)} plan — $${price.amt} ${price.cur}</div>
+    ${cashBtn}
+    <div class="paywall-coming">
+      <div class="paywall-coming-label">⏳ Coming soon</div>
+      <div class="paywall-coming-icons">${comingIcons}</div>
+    </div>
+    <div class="auth-link" style="margin-top:20px;"><a id="pwBack">← Back to plans</a></div>
   </div>`);
   document.querySelectorAll("[data-method]").forEach(el=>{
     el.addEventListener("click",()=>pickPaywallMethod(el.dataset.method));
   });
   document.getElementById("pwBack").addEventListener("click",async()=>{
     try{
-      await updateDoc(doc(db,"users",currentUser.uid),{requestedPlan:""});
+      await updateDoc(doc(db,"users",currentUser.uid),{requestedPlan:"", currency:""});
       currentUserDoc.requestedPlan = "";
+      currentUserDoc.currency = "";
       showPaywallScreen();
     }catch(e){toast("Could not go back. Try again.")}
   });
@@ -465,12 +501,17 @@ async function pickPaywallMethod(method){
 function paywallInstructions(planId, method){
   if(method === "lynk" && !LYNk_ENABLED) method = "cash";
   const p = PLANS[planId];
+  const currency = currentUserDoc.currency || (isJamaicaUser() ? "JMD" : "USD");
+  const price = priceFor(p, currency);
   const id = currentUserDoc?.displayId || "—";
   let body = "";
+  let showClaim = false;
+
   if(method === "lynk"){
+    showClaim = true;
     body = `
       <div class="paywall-info">
-        <div style="margin-bottom:10px;"><strong>1.</strong> Open your Lynk app and send <strong>$${p.jmd} JMD</strong> (or <strong>$${p.usd} USD</strong>) to:</div>
+        <div style="margin-bottom:10px;"><strong>1.</strong> Open your Lynk app and send <strong>$${price.amt} ${price.cur}</strong> to:</div>
         <div class="paywall-ref" id="lynkNum">${esc(LYNk_NUMBER)}</div>
         <div class="paywall-copy-hint">tap to copy</div>
         <div style="margin-bottom:10px;"><strong>2.</strong> In the payment note, put this exact reference:</div>
@@ -483,22 +524,23 @@ function paywallInstructions(planId, method){
   } else {
     body = `
       <div class="paywall-info">
-        <div style="margin-bottom:10px;">Show this ID to <strong>D4N</strong> at school and hand over <strong>$${p.jmd} JMD</strong> (or <strong>$${p.usd} USD</strong>) in cash.</div>
+        <div style="margin-bottom:12px;">Show this ID to <strong>D4N</strong> at school and hand over <strong>$${price.amt} ${price.cur}</strong> in cash.</div>
         <div class="paywall-ref" id="cashRef">${esc(id)}</div>
         <div class="paywall-copy-hint">tap to copy</div>
-        <div style="margin-top:14px;">Once you've paid, tap the button below so D4N knows to activate you.</div>
+        <div style="margin-top:16px;color:var(--amber);">⏳ After you pay, D4N will approve your account. Just check back in a moment.</div>
       </div>
-      <button class="btn btn-primary" id="pwClaimedBtn">✅ I've paid in person</button>
+      <button class="btn btn-primary" id="pwCheckBtn2">🔄 Check status</button>
     `;
   }
   showAuthGate(`<div class="auth-card" style="max-width:480px;">
     <div class="auth-brand">D4N's Study Assistant</div>
     <div class="auth-title">${method==='lynk'?'Pay via Lynk':'Pay in person'}</div>
-    <div class="auth-sub">${esc(p.name)} plan — $${p.jmd} JMD / $${p.usd} USD</div>
+    <div class="auth-sub">${esc(p.name)} plan — $${price.amt} ${price.cur}</div>
     ${body}
     <div class="auth-link"><a id="pwMethodBack">← Change payment method</a></div>
     <div class="auth-link"><a id="pwSignOut2">Sign out</a></div>
   </div>`);
+
   const copyEls = ["lynkNum","lynkRef","cashRef"];
   copyEls.forEach(cid=>{
     const el = document.getElementById(cid);
@@ -507,7 +549,12 @@ function paywallInstructions(planId, method){
       catch(e){ toast("Long-press to copy"); }
     });
   });
-  document.getElementById("pwClaimedBtn").addEventListener("click", markPaymentClaimed);
+  if(showClaim){
+    document.getElementById("pwClaimedBtn").addEventListener("click", markPaymentClaimed);
+  } else {
+    const cb = document.getElementById("pwCheckBtn2");
+    if(cb) cb.addEventListener("click", checkStatusAgain);
+  }
   document.getElementById("pwMethodBack").addEventListener("click", async()=>{
     try{
       await updateDoc(doc(db,"users",currentUser.uid),{paymentMethod:"",paymentClaimed:false});
@@ -533,6 +580,8 @@ async function markPaymentClaimed(){
 
 function paywallWaiting(planId, method){
   const p = PLANS[planId];
+  const currency = currentUserDoc.currency || "JMD";
+  const price = priceFor(p, currency);
   const id = currentUserDoc?.displayId || "—";
   const methodLabel = method === "lynk" ? "📱 Lynk" : "🏫 In person";
   showAuthGate(`<div class="auth-card" style="max-width:480px;">
@@ -541,7 +590,7 @@ function paywallWaiting(planId, method){
     <div class="auth-sub">Your payment is being verified. You'll be unlocked as soon as D4N confirms it.</div>
     <div class="auth-badge pending">⏳ Awaiting activation</div>
     <div class="auth-info-row"><span>Plan</span><span class="val">${esc(p.name)}</span></div>
-    <div class="auth-info-row"><span>Amount</span><span class="val">$${p.jmd} JMD / $${p.usd} USD</span></div>
+    <div class="auth-info-row"><span>Amount</span><span class="val">$${price.amt} ${price.cur}</span></div>
     <div class="auth-info-row"><span>Method</span><span class="val">${methodLabel}</span></div>
     <div class="auth-info-row"><span>Reference</span><span class="val" style="color:var(--cyan);letter-spacing:.05em;">${esc(id)}</span></div>
     <button class="btn btn-primary" id="pwCheckBtn" style="margin-top:14px;">🔄 Check status</button>
@@ -553,18 +602,19 @@ function paywallWaiting(planId, method){
     if(!confirm("Cancel your payment request? You can restart it any time."))return;
     try{
       await updateDoc(doc(db,"users",currentUser.uid),{
-        requestedPlan:"", paymentMethod:"", paymentClaimed:false
+        requestedPlan:"", paymentMethod:"", paymentClaimed:false, currency:""
       });
       currentUserDoc.requestedPlan = "";
       currentUserDoc.paymentMethod = "";
       currentUserDoc.paymentClaimed = false;
+      currentUserDoc.currency = "";
       showPaywallScreen();
     }catch(e){toast("Could not cancel")}
   });
   document.getElementById("pwSignOut3").addEventListener("click",handleSignOut);
 }
 
-// Legacy alias — kept so existing calls keep working
+// Legacy alias
 function showPendingScreen(){ showPaywallScreen(); }
 function showExpiredScreen(){
   const id=currentUserDoc?.displayId||"—";
@@ -2407,18 +2457,12 @@ function pageAdminPanel(){
               <button class="mini-btn green" data-admin-action="approve" data-plan="term" data-uid="${u.uid}">✓ T (${planConfig.termDays}d)</button>
               <button class="mini-btn danger" data-admin-action="delete" data-uid="${u.uid}">🗑</button>`;
           }
-                   const reqPlan = u.requestedPlan ? PLANS[u.requestedPlan] : null;
+          const reqPlan = u.requestedPlan ? PLANS[u.requestedPlan] : null;
+          const reqCur = u.currency === "USD" ? "USD" : "JMD";
+          const reqAmt = reqPlan ? (reqCur === "USD" ? "$"+reqPlan.usd+" USD" : "$"+reqPlan.jmd+" JMD") : "";
           const reqBadge = reqPlan
-            ? `<span class="au-status pending" style="margin-top:6px;display:block;">💳 Requested: ${esc(reqPlan.name)} · $${reqPlan.jmd} JMD ${u.paymentClaimed?'· ✅ Paid (claim)':''} · ${u.paymentMethod==='lynk'?'📱 Lynk':(u.paymentMethod==='cash'?'🏫 Cash':'—')}</span>`
+            ? `<span class="au-status pending" style="margin-top:6px;display:block;">💳 Requested: ${esc(reqPlan.name)} · ${esc(reqAmt)}${u.paymentClaimed?' · ✅ Paid (claim)':''} · ${u.paymentMethod==='lynk'?'📱 Lynk':(u.paymentMethod==='cash'?'🏫 Cash':'—')}</span>`
             : "";
-          return `<div class="admin-user-row">
-            <div class="au-top"><span class="au-name">${esc(u.username||"user")}</span><span class="au-id">${esc(u.displayId||"—")}</span></div>
-            <div class="au-email">${esc(u.email||"—")}</div>
-            <span class="au-status ${st}">${st==='approved'?'✓ Active':(st==='pending'?'⏳ Pending':'⏰ Expired')} · ${planLabel(u)} · exp: ${esc(expStr)} · joined: ${esc(createdStr)}</span>
-            ${reqBadge}
-            <div class="admin-actions">${actions}</div>
-          </div>`;
-        };
         if(adminFilterMode==='all'){
           if(pending.length){body+=`<div class="qa-label" style="color:var(--amber);margin:14px 0 8px;">⏳ Pending (${pending.length})</div>`;pending.forEach(u=>{body+=renderRow(u)})}
           if(active.length){body+=`<div class="qa-label" style="color:var(--green);margin:18px 0 8px;">✓ Active (${active.length})</div>`;active.forEach(u=>{body+=renderRow(u)})}
