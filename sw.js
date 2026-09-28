@@ -5,6 +5,11 @@ const APP_SHELL = [
   './manifest.json',
   './icon.svg',
   './icon-maskable.svg'
+  './logos/lynk.png',
+  './logos/mycash.png',
+  './logos/jnpay.png',
+  './logos/handypay.png',
+  './logos/paypal.png',
 ];
 const CDN_URLS = [
   'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js',
